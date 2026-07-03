@@ -1,0 +1,126 @@
+# Changelog — Genre v2
+
+All notable changes to this project are recorded here.
+
+Format follows [Keep a Changelog](https://keepachangelog.com/); versioning is
+loosely [SemVer](https://semver.org/): `MAJOR.MINOR.PATCH`.
+
+- **MAJOR** — a reanalysis-invalidating change (model, embedding, or cache-key
+  change; anything that makes old cached results incomparable to new ones).
+- **MINOR** — a new feature or route (a lens, a workflow, a UI panel) that
+  leaves existing analysis valid.
+- **PATCH** — a fix or refinement with no schema or feature surface change.
+
+Keep the newest version on top. Under each version, group lines under
+**Added / Changed / Fixed / Removed**. Date format is `YYYY-MM-DD`.
+
+---
+
+## [Unreleased]
+
+_Work in progress lands here, then gets stamped with a version + date on release._
+
+### Added
+- `CHANGELOG.md` (this file) and `README.md` project documentation.
+- **Audio preview player.** New read-only `GET /audio/<hash>` route streams a
+  previously-analyzed track by content hash with HTTP Range support (serves only
+  files recorded in the DB — not an arbitrary-file endpoint). Per-row UI: a
+  ▶ play/pause button, click-the-waveform-to-seek, a gold playhead, and a
+  `mm:ss / mm:ss` readout. One shared `<audio>` (one track at a time); dropped
+  files play client-side via blob URL, batch/cached tracks stream from `/audio`.
+- **MAEST ensemble (compare engines).** New on-demand `POST /compare` route runs
+  the MAEST transformer (`discogs-maest-30s-pw`, outputs Discogs-400 directly at
+  `StatefulPartitionedCall:0`, input node `serving_default_melspectrogram`)
+  alongside the EffNet CNN and returns both reads plus their element-wise merge
+  (valid because both share the exact 400-label order). Per-row **⚖ compare
+  engines** button shows EffNet / MAEST / Merged side by side, with a **live
+  EffNet↔MAEST weight slider** and an agree/disagree note. `/compare` returns each
+  engine's per-style scores once (union of both top-15); the slider re-mixes the
+  merge instantly client-side — MAEST does **not** re-run on drag. MAEST is ~10×
+  slower than EffNet on CPU (~15 s/track), so it runs only on the initial click
+  and never touches the analysis cache. Requires the ~334 MB MAEST model
+  (`discogs-maest-30s-pw-1.pb`) in `MODEL_DIR`; absent → feature is a no-op.
+- **PulseRoots family roll-up.** New `family` segmentation lens and an always-on
+  family tag (◇) on each track's headline genre. Maps the Discogs-400 styles to
+  14 broad electronic families via `static/genre_families.json`, derived from the
+  [PulseRoots](https://mendiak.github.io/pulse.roots/) hierarchy (MIT-licensed).
+  Resolution chains PulseRoots → the editable sibling groups → the style itself
+  (68% of electronic styles map directly; the sibling fallback covers most of the
+  rest). No effect on recognition — it's a taxonomy/organization layer.
+
+### Changed
+- **Reworked the layout to a single full-window drop area.** Replaced the
+  two-column split (left dropzone / right list) with one big drop-anywhere window
+  that holds the analyzed list, plus a bottom action bar. Browse / batch folder /
+  vibes moved to the bar's left; count / clear / export to its right; the header
+  slimmed to logo + lens controls. Added a full-window "⊕ release to add" drag
+  overlay with flicker-free dragleave (ignores child-element boundaries), sticky
+  column headers, and a larger centered empty-state hero (clickable to browse).
+  Also removed click-to-browse on the whole area (would fire on rows/buttons) and
+  fixed a stray duplicate `<body>` tag.
+- Reskinned the Winamp theme from near-black to a **silver metallic** chassis for
+  readability (base was too dark): `--bg` `#17171C`→`#3E3E48`, `--panel`
+  `#26262E`→`#55555F`, `--panel-2`→`#6A6A74`, near-white etched text
+  (`--text`→`#F2F3F7`), lifted secondary text (`--dim` `#6B7690`→`#CDD2DE`, AA on
+  the lighter panels), silver header/panel ridge stripes, brighter export button,
+  and darker LCD-green readouts bumped for contrast (`#0A8F0A`→`#22C022`). The
+  dark LCD wells (BPM/key/waveform) are kept dark on purpose — inset displays in a
+  silver body, the authentic classic-Winamp look. Gold + green identity preserved.
+
+### Fixed
+- Per-row **+ tag** and **+ vibe** buttons did nothing: they used JavaScript
+  `prompt()` dialogs, which browsers suppress after a page fires several (so the
+  handler ran, the prompt returned null, and it silently bailed). Replaced both
+  with inline inputs/menus — no dialogs. Also fixed a latent bug where refreshing
+  vibe matches stacked duplicate holders.
+- Restored the `templates/` + `static/` layout the code requires: moved
+  `index.html` → `templates/`, `app.css` and `app.js` → `static/`. They had been
+  flattened into the project root, which made the app un-runnable —
+  `render_template("index.html")` 500'd with `TemplateNotFound` and `/static/*`
+  404'd. Boot + serving now verified (GET `/`, `/static/app.js`, `/static/app.css`
+  all 200 in both fake and real modes).
+
+---
+
+## [2.0.0] — 2026-07-02
+
+Baseline snapshot of the fully-functional, verified state at the time versioning
+began. Everything below already existed; it is recorded here as the starting
+point, not as new work.
+
+### Core analysis
+- Local genre analysis via Essentia Discogs-EffNet embedder → Discogs-400
+  classifier head (400 styles), CPU-only (`essentia-tensorflow`).
+- Per-track pipeline: 16 kHz decode → 1280-dim embeddings → 400-style scores ×
+  N frames → `frame_topk` (top-6/frame) → `salience_read` (energy × confidence ×
+  recurrence). Separate 44.1 kHz decode → `RhythmExtractor2013` (BPM) +
+  `KeyExtractor` (key/scale → Camelot) + 240-point waveform envelope.
+- Optional custom head (`custom_head.npz`, trained externally) scores the same
+  embeddings — no extra audio work.
+
+### Lens system (client-side)
+- Identity lens: `v2` (salience-weighted) / `v1` (flat % of track).
+- Segmentation lens: `raw` / `hysteresis` / `sibling-merge` / `hyst+sib`.
+- Global defaults with independent per-row overrides on either axis.
+- Editable sibling groups (near-synonym clusters: House / Trance / Techno / …).
+- Temporal smoothing + "Other"-bucket collapse shared by waveform and breakdown.
+
+### UI
+- Fisheye (Dock-style) waveform colored by genre segment, hover-to-magnify.
+- Winamp-homage skin (beveled panels, LCD readouts, Silkscreen font).
+- Fine-detail on-demand re-analysis (`/refine`, ~0.5 s resolution).
+- Manual genre override (`✎ override`) that also saves a copy to
+  `~/genre_training/<genre>/` for the custom-head training pipeline.
+- Per-track color recoloring, details/tags panel, export to `.txt`.
+
+### Persistence & workflows
+- SQLite at `~/genre_v2.db` (env `GENRE_DB`): analysis cache keyed by content
+  hash (re-drops return instantly, tagged "cached"), plus vibes and tags.
+- Vibes: user-defined similarity clusters over the 1280-dim mean embeddings;
+  auto match %, whole-DB cosine-similarity playlists (`/vibes` routes).
+- Tags: manual toggleable chips per track (`/tags` routes).
+- Batch folder mode (`/batch`): NDJSON stream, 3 parallel workers, cache-aware.
+
+### Guarantees
+- Never modifies the user's music files — analysis is read-only; training saves
+  are copies. Fully local; no internet after the one-time model download.

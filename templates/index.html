@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Genre v2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Syne:wght@700;800&family=JetBrains+Mono:wght@400;500;600&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<!-- vibes side panel -->
+<div id="vibe-panel">
+  <div class="sib-hd">
+    <h2>Vibes</h2>
+    <button class="sib-close" id="vibe-close">close ✕</button>
+  </div>
+  <div class="sib-body" id="vibe-body"></div>
+</div>
+<!-- sibling editor panel -->
+<div id="sib-panel">
+  <div class="sib-hd">
+    <h2>Sibling Groups</h2>
+    <button class="sib-close" id="sib-close">close ✕</button>
+  </div>
+  <div class="sib-body" id="sib-body"></div>
+</div>
+
+<header>
+  <!-- animated EQ bars signature element -->
+  <div class="eq-bars" id="eq-bars"></div>
+  <div class="hd-left">
+    <h1>GENRE<em>v2</em></h1>
+    <span class="sub">local · no internet · files untouched</span>
+  </div>
+  <div class="lensbar">
+    <span class="lblab">identity</span>
+    <select id="g-identity" title="overall genre read (side breakdown)">
+      <option value="v2">v2 · salience</option>
+      <option value="v1">v1 · flat %</option>
+    </select>
+    <span class="lblab">segmentation</span>
+    <select id="g-seg" title="waveform genre stream">
+      <option value="raw">raw</option>
+      <option value="hysteresis" selected>hysteresis</option>
+      <option value="sibling">sibling-merge</option>
+      <option value="family">family (PulseRoots)</option>
+      <option value="hyst+sib">hyst + sibling</option>
+    </select>
+    <button id="sib-btn" class="sib-btn" type="button" title="edit sibling-merge groups">siblings &#9881;</button>
+  </div>
+</header>
+
+<!-- ONE big drop-anywhere window; the list lives inside it -->
+<main id="drop" tabindex="0" aria-label="Drop audio files anywhere in this window">
+  <div class="listhead"><span>Track</span><span>BPM / Key</span><span>Genre</span></div>
+  <div id="rows">
+    <div id="empty">
+      <div class="big">Drop tracks here</div>
+      <div class="hint">Drag any number of audio files anywhere in this window,<br>
+        or use <b>Browse</b> below. MP3, FLAC, WAV, M4A, OGG, AIFF &amp; more.</div>
+    </div>
+  </div>
+</main>
+
+<!-- bottom action bar -->
+<footer class="actionbar">
+  <label class="browse" for="picker">⊕ Browse files&hellip;</label>
+  <button id="batch-btn" type="button">⊕ batch folder</button>
+  <button id="vibe-btn" type="button">◈ vibes</button>
+  <span id="batch-status"></span>
+  <span class="spacer"></span>
+  <span id="count">0 tracks</span>
+  <button id="clear" type="button">Clear list</button>
+  <button id="export" type="button" disabled>Export .txt</button>
+  <input id="picker" type="file" multiple
+    accept=".mp3,.flac,.m4a,.mp4,.aac,.alac,.ogg,.oga,.opus,.wav,.aif,.aiff,.aifc,.wma,.wv,.ape,.mpc,.dsf,audio/*">
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
