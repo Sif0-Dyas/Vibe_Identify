@@ -71,7 +71,7 @@ AUDIO_EXTS = {
 FAKE = os.environ.get("FAKE_ANALYZER") == "1"
 
 app = Flask(__name__)
-_lock = threading.Lock()          # one analysis at a time (models aren't thread-safe)
+_lock = threading.Lock()          # TF model instances are shared and not thread-safe; hold during inference only
 
 # ----------------------------------------------------------------------------
 # Persistence: analysis cache + vibes (SQLite, single file at ~/genre_v2.db)
@@ -459,8 +459,11 @@ def analyze(path: Path) -> dict:
 
     # --- genre (model wants 16 kHz) ---
     audio16 = MonoLoader(filename=str(path), sampleRate=16000, resampleQuality=4)()
-    embeddings = eng["embedder"](audio16)
-    preds = eng["classifier"](embeddings)
+    # embedder + classifier are shared, non-thread-safe TF instances -> serialize
+    # this one inference pass; decode/BPM/key below stay parallel across workers.
+    with _lock:
+        embeddings = eng["embedder"](audio16)
+        preds = eng["classifier"](embeddings)
     mean = np.mean(preds, axis=0)
     order = np.argsort(mean)[::-1]
     labels = eng["labels"]
@@ -537,8 +540,10 @@ def refine_segments(path: Path):
     from essentia.standard import MonoLoader
     eng = get_engine()
     audio16 = MonoLoader(filename=str(path), sampleRate=16000, resampleQuality=4)()
-    emb = get_fine_embedder()(audio16)
-    preds = eng["classifier"](emb)
+    # shared, non-thread-safe TF instances -> serialize inference only
+    with _lock:
+        emb = get_fine_embedder()(audio16)
+        preds = eng["classifier"](emb)
     winners = np.argmax(preds, axis=1)
     labels = eng["labels"]
     segments = [labels[int(i)].split("---", 1)[1] for i in winners]
@@ -590,8 +595,7 @@ def analyze_route():
 
         title = read_title(p) or Path(f.filename).stem
         tags = read_tags(p)
-        with _lock:
-            result = analyze(p)
+        result = analyze(p)          # analyze() locks its own model inference
         emb = result.pop("emb_mean", None)
         payload = build_payload(f.filename, None, title, tags, result)
         cache_put(h, f.filename, None, title, payload, emb)
@@ -639,8 +643,7 @@ def refine_route():
     try:
         f.save(tmp.name)
         tmp.close()
-        with _lock:
-            segments, frames = refine_segments(Path(tmp.name))
+        segments, frames = refine_segments(Path(tmp.name))   # locks its own inference
         return jsonify({"segments": segments, "frames": frames, "hop_seconds": FINE_HOP_SECONDS})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
@@ -1009,4 +1012,4 @@ if __name__ == "__main__":
     if FAKE:
         print("FAKE_ANALYZER=1 -- serving fake results (GUI test mode, no Essentia).")
     print("Genre v2 running -> http://localhost:5005")
-    app.run(host="0.0.0.0", port=5005, debug=False, threaded=True)
+    app.run(host=os.environ.get("GENRE_HOST", "127.0.0.1"), port=5005, debug=False, threaded=True)

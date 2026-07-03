@@ -68,6 +68,17 @@ _Work in progress lands here, then gets stamped with a version + date on release
   silver body, the authentic classic-Winamp look. Gold + green identity preserved.
 
 ### Fixed
+- **`/batch` race on the shared TF models.** `/batch` drove the shared, non-thread-safe
+  `embedder`/`classifier` instances from a 3-worker pool with no lock, while Essentia
+  releases the GIL during compute — so concurrent workers overlapped in the model,
+  intermittently corrupting predictions or crashing (timing-dependent, so it only
+  surfaced on some batch runs). Moved the lock *inside* `analyze()`/`refine_segments()`,
+  held only around the embedder+classifier inference pass; decode, BPM, and key stay
+  parallel across workers, and the redundant route-level locks on `/analyze`/`/refine`
+  were removed (`analyze()` now self-locks).
+- **Bind to localhost by default.** The server now binds `127.0.0.1` unless
+  `GENRE_HOST=0.0.0.0` is set, so the trust-a-caller HTTP API (`/batch`,
+  `/save_training`, `/audio`) isn't exposed to the LAN by accident.
 - Per-row **+ tag** and **+ vibe** buttons did nothing: they used JavaScript
   `prompt()` dialogs, which browsers suppress after a page fires several (so the
   handler ran, the prompt returned null, and it silently bailed). Replaced both

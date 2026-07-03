@@ -59,8 +59,14 @@ FAKE_ANALYZER=1 python genre_gui.py    # instant fake results, no models (UI dev
 
 Then open <http://localhost:5005> in your Windows browser.
 
+The server binds `127.0.0.1` (localhost) by default; set `GENRE_HOST=0.0.0.0` to
+deliberately opt into LAN/Tailscale access. The HTTP API assumes a trusted caller
+(routes read/scan/copy server-side paths), so only expose it beyond localhost
+intentionally.
+
 Environment variables: `MODEL_DIR` (model download dir), `GENRE_DB` (SQLite
-path), `CUSTOM_HEAD` (path to `custom_head.npz`), `FAKE_ANALYZER=1` (mock mode).
+path), `CUSTOM_HEAD` (path to `custom_head.npz`), `GENRE_HOST` (bind address,
+default `127.0.0.1`), `FAKE_ANALYZER=1` (mock mode).
 
 ---
 
