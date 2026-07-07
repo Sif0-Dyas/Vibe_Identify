@@ -433,6 +433,37 @@ footer, .actionbar{
   border:1px dashed var(--line); border-radius:4px; padding:1px 7px; cursor:pointer;
 }
 .addvibe-btn:hover{color:var(--accent-b); border-color:var(--accent-b)}
+/* top-3 descending emphasis: #1 largest -> #3 smallest, all above the rest */
+.breakdown .bd-item.rank-1, .vibematches .vibematch.rank-1{font-size:1.55em; font-weight:700}
+.breakdown .bd-item.rank-2, .vibematches .vibematch.rank-2{font-size:1.28em; font-weight:600}
+.breakdown .bd-item.rank-3, .vibematches .vibematch.rank-3{font-size:1.1em;  font-weight:600}
+/* per-song vibe feedback thumbs */
+.vibematch{display:inline-flex; align-items:baseline; gap:3px}
+.vm-lead{color:var(--dim)}
+.vm-thumb{
+  background:none; border:none; cursor:pointer; padding:0 1px; font-size:.85em;
+  opacity:.4; transition:opacity .12s, transform .12s; line-height:1;
+}
+.vm-thumb:hover{opacity:1; transform:scale(1.25)}
+/* vibe weight editor -- one -1..+1 slider per member track */
+.vibe-weights{margin:8px 0 4px; padding-left:4px}
+.vw-track{
+  display:flex; align-items:center; gap:10px; padding:5px 0;
+  font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--dim);
+}
+.vw-track b{
+  color:var(--text); font-weight:500; flex:1; min-width:0;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.vw-track input[type=range]{width:120px; accent-color:var(--accent-b); cursor:pointer}
+.vw-val{min-width:34px; text-align:right; font-variant-numeric:tabular-nums; color:var(--dim)}
+.vw-val.pos{color:var(--accent-a)}
+.vw-val.neg{color:var(--err)}
+.vw-rm{
+  background:none; border:1px solid var(--line); border-radius:4px; color:var(--dim);
+  cursor:pointer; font-size:10px; padding:1px 6px;
+}
+.vw-rm:hover{color:var(--err); border-color:var(--err)}
 .cached-tag{
   font-family:'JetBrains Mono',monospace; font-size:9px; letter-spacing:.08em;
   text-transform:uppercase; color:var(--other); margin-left:6px;

@@ -47,7 +47,7 @@ import tempfile
 import threading
 import time
 import urllib.request
-from contextlib import closing
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 from flask import render_template, Flask, jsonify, request, send_file
@@ -100,6 +100,11 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE)""")
         c.execute("""CREATE TABLE IF NOT EXISTS track_tags(
             tag_id INTEGER, hash TEXT, UNIQUE(tag_id, hash))""")
+        # migration: weighted vibe membership (Rocchio relevance feedback).
+        # Older DBs have vibe_tracks(vibe_id, hash) only; add the weight column.
+        cols = {r[1] for r in c.execute("PRAGMA table_info(vibe_tracks)")}
+        if "weight" not in cols:
+            c.execute("ALTER TABLE vibe_tracks ADD COLUMN weight REAL DEFAULT 1.0")
 
 
 init_db()
@@ -147,16 +152,31 @@ def cosine(a, b):
 
 
 def vibe_centroid(vibe_id: int):
-    """Mean embedding of member tracks -- the vibe's center of gravity."""
+    """Preference-weighted center of a vibe (Rocchio relevance feedback):
+
+        center = Σ (weightᵢ · embeddingᵢ) / Σ |weightᵢ|
+
+    Positive-weight (liked) tracks pull the center toward them; negative-weight
+    (disliked) tracks push it away. Cosine ranking is scale-invariant, so the
+    normalization just keeps magnitudes tame. With all weights = 1 this reduces
+    to the old plain mean. Returns None if the vibe has no usable members."""
     import numpy as np
     with _db_lock, closing(db()) as conn, conn as c:
         rows = c.execute(
-            "SELECT t.embedding FROM vibe_tracks v JOIN tracks t ON t.hash=v.hash "
-            "WHERE v.vibe_id=? AND t.embedding IS NOT NULL", (vibe_id,)).fetchall()
-    embs = [np.frombuffer(r[0], dtype=np.float32) for r in rows if r[0]]
-    if not embs:
+            "SELECT t.embedding, v.weight FROM vibe_tracks v JOIN tracks t "
+            "ON t.hash=v.hash WHERE v.vibe_id=? AND t.embedding IS NOT NULL",
+            (vibe_id,)).fetchall()
+    acc, wsum = None, 0.0
+    for blob, w in rows:
+        if not blob:
+            continue
+        w = 1.0 if w is None else float(w)
+        emb = np.frombuffer(blob, dtype=np.float32) * w
+        acc = emb if acc is None else acc + emb
+        wsum += abs(w)
+    if acc is None or wsum == 0:
         return None
-    return np.mean(embs, axis=0)
+    return acc / wsum
 _engine = {}                      # lazily-built: labels, embedder, classifier
 
 
@@ -570,88 +590,102 @@ def build_payload(filename, filepath, title, tags, result):
     }
 
 
-@app.post("/analyze")
-def analyze_route():
-    f = request.files.get("file")
+# ----------------------------------------------------------------------------
+# Upload plumbing shared by /analyze, /refine, /compare: validate the audio
+# upload, stage it to a temp file, and always clean up.
+# ----------------------------------------------------------------------------
+class UploadError(Exception):
+    """Bad/missing upload -- carries the HTTP status the route should return."""
+    def __init__(self, message, status):
+        super().__init__(message)
+        self.status = status
+
+
+def _check_upload(f, missing_msg="no file received"):
+    """Validate a Werkzeug FileStorage; raise UploadError, else return its suffix."""
     if f is None or not f.filename:
-        return jsonify({"error": "no file received"}), 400
+        raise UploadError(missing_msg, 400)
     suffix = Path(f.filename).suffix.lower()
     if suffix not in AUDIO_EXTS:
-        return jsonify({"error": f"unsupported file type: {suffix or 'none'}"}), 415
+        raise UploadError(f"unsupported file type: {suffix or 'none'}", 415)
+    return suffix
 
+
+@contextmanager
+def saved_upload(f, missing_msg="no file received"):
+    """Validate `f`, save it to a temp file, yield its Path, and unlink on exit."""
+    suffix = _check_upload(f, missing_msg)
     tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
     try:
         f.save(tmp.name)
         tmp.close()
-        p = Path(tmp.name)
-
-        # cache-first: identical audio content = identical hash = instant return
-        h = file_hash(p)
-        cached = cache_get(h)
-        if cached:
-            cached["hash"] = h
-            cached["cached"] = True
-            return jsonify(cached)
-
-        title = read_title(p) or Path(f.filename).stem
-        tags = read_tags(p)
-        result = analyze(p)          # analyze() locks its own model inference
-        emb = result.pop("emb_mean", None)
-        payload = build_payload(f.filename, None, title, tags, result)
-        cache_put(h, f.filename, None, title, payload, emb)
-        payload["hash"] = h
-        payload["cached"] = False
-        return jsonify(payload)
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        yield Path(tmp.name)
     finally:
         try:
             os.unlink(tmp.name)
         except OSError:
             pass
+
+
+@app.post("/analyze")
+def analyze_route():
+    f = request.files.get("file")
+    try:
+        with saved_upload(f) as p:
+            # cache-first: identical audio content = identical hash = instant return
+            h = file_hash(p)
+            cached = cache_get(h)
+            if cached:
+                cached["hash"] = h
+                cached["cached"] = True
+                return jsonify(cached)
+
+            title = read_title(p) or Path(f.filename).stem
+            tags = read_tags(p)
+            result = analyze(p)          # analyze() locks its own model inference
+            emb = result.pop("emb_mean", None)
+            payload = build_payload(f.filename, None, title, tags, result)
+            cache_put(h, f.filename, None, title, payload, emb)
+            payload["hash"] = h
+            payload["cached"] = False
+            return jsonify(payload)
+    except UploadError as e:
+        return jsonify({"error": str(e)}), e.status
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.post("/refine")
 def refine_route():
     """Re-analyze one track at fine resolution; returns a denser segment list."""
     f = request.files.get("file")
-    if f is None or not f.filename:
-        return jsonify({"error": "no file received"}), 400
-    suffix = Path(f.filename).suffix.lower()
-    if suffix not in AUDIO_EXTS:
-        return jsonify({"error": f"unsupported file type: {suffix or 'none'}"}), 415
-
-    if FAKE:
-        import hashlib, random
-        rng = random.Random(hashlib.md5(("fine" + f.filename).encode()).hexdigest())
-        pool = ["Drum n Bass", "Trance", "Dubstep", "Hard Techno", "Hardstyle",
-                "House", "Techno", "Jungle", "Breakcore", "Psy-Trance"]
-        rng.shuffle(pool)
-        seg_styles = [pool[0]] * 4 + pool[1:3]
-        segments = []
-        for _ in range(rng.randint(30, 60)):
-            segments += [rng.choice(seg_styles)] * rng.randint(3, 12)
-        frames = []
-        for s in segments:
-            others = rng.sample([p for p in pool if p != s], 3)
-            top = round(rng.uniform(0.25, 0.6), 3)
-            rest = sorted((round(rng.uniform(0.02, top - 0.02), 3) for _ in range(3)), reverse=True)
-            frames.append([[s, top]] + [[others[j], rest[j]] for j in range(3)])
-        return jsonify({"segments": segments, "frames": frames, "hop_seconds": FINE_HOP_SECONDS})
-
-    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
     try:
-        f.save(tmp.name)
-        tmp.close()
-        segments, frames = refine_segments(Path(tmp.name))   # locks its own inference
-        return jsonify({"segments": segments, "frames": frames, "hop_seconds": FINE_HOP_SECONDS})
+        _check_upload(f)
+        if FAKE:
+            import hashlib, random
+            rng = random.Random(hashlib.md5(("fine" + f.filename).encode()).hexdigest())
+            pool = ["Drum n Bass", "Trance", "Dubstep", "Hard Techno", "Hardstyle",
+                    "House", "Techno", "Jungle", "Breakcore", "Psy-Trance"]
+            rng.shuffle(pool)
+            seg_styles = [pool[0]] * 4 + pool[1:3]
+            segments = []
+            for _ in range(rng.randint(30, 60)):
+                segments += [rng.choice(seg_styles)] * rng.randint(3, 12)
+            frames = []
+            for s in segments:
+                others = rng.sample([p for p in pool if p != s], 3)
+                top = round(rng.uniform(0.25, 0.6), 3)
+                rest = sorted((round(rng.uniform(0.02, top - 0.02), 3) for _ in range(3)), reverse=True)
+                frames.append([[s, top]] + [[others[j], rest[j]] for j in range(3)])
+            return jsonify({"segments": segments, "frames": frames, "hop_seconds": FINE_HOP_SECONDS})
+
+        with saved_upload(f) as p:
+            segments, frames = refine_segments(p)   # locks its own inference
+            return jsonify({"segments": segments, "frames": frames, "hop_seconds": FINE_HOP_SECONDS})
+    except UploadError as e:
+        return jsonify({"error": str(e)}), e.status
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
-    finally:
-        try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
 
 
 def _top_styles(vec, labels, k=6, thresh=0.02):
@@ -709,33 +743,21 @@ def compare_route():
         return jsonify({"maest_available": True, "weight": 0.5, "pairs": pairs})
 
     filepath = (request.form.get("filepath") or "").strip()
-    tmp = None
     try:
         if filepath:
             p = Path(filepath)
             if not p.is_file():
                 return jsonify({"error": f"file not found: {filepath}"}), 404
-        else:
-            f = request.files.get("file")
-            if f is None or not f.filename:
-                return jsonify({"error": "no file or filepath provided"}), 400
-            suffix = Path(f.filename).suffix.lower()
-            if suffix not in AUDIO_EXTS:
-                return jsonify({"error": f"unsupported file type: {suffix or 'none'}"}), 415
-            tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-            f.save(tmp.name)
-            tmp.close()
-            p = Path(tmp.name)
-        with _lock:
-            return jsonify(compare_engines(p))
+            with _lock:
+                return jsonify(compare_engines(p))
+        with saved_upload(request.files.get("file"),
+                          "no file or filepath provided") as p:
+            with _lock:
+                return jsonify(compare_engines(p))
+    except UploadError as e:
+        return jsonify({"error": str(e)}), e.status
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
-    finally:
-        if tmp is not None:
-            try:
-                os.unlink(tmp.name)
-            except OSError:
-                pass
 
 
 @app.post("/save_training")
@@ -890,15 +912,67 @@ def vibes_create():
         return jsonify({"error": "a vibe with that name already exists"}), 409
 
 
+def _upsert_vibe_weight(vid, h, weight):
+    """Insert or update a track's weight within a vibe (shared by add + weight)."""
+    with _db_lock, closing(db()) as conn, conn as c:
+        c.execute("INSERT INTO vibe_tracks(vibe_id, hash, weight) VALUES(?,?,?) "
+                  "ON CONFLICT(vibe_id, hash) DO UPDATE SET weight=excluded.weight",
+                  (vid, h, weight))
+
+
 @app.post("/vibes/add")
 def vibes_add():
     data = request.get_json(silent=True) or {}
     vid, h = data.get("vibe_id"), data.get("hash")
     if not vid or not h:
         return jsonify({"error": "vibe_id and hash required"}), 400
+    weight = max(-1.0, min(1.0, float(data.get("weight", 1.0))))
+    _upsert_vibe_weight(vid, h, weight)
+    return jsonify({"added": True, "weight": weight})
+
+
+@app.post("/vibes/weight")
+def vibes_weight():
+    """Set a track's weight within a vibe (Rocchio feedback). Positive pulls the
+    vibe toward the track, negative pushes it away, 0 is a neutral member. This is
+    what the per-song 👍/👎 and the slider editor both call. Upserts the link."""
+    data = request.get_json(silent=True) or {}
+    vid, h = data.get("vibe_id"), data.get("hash")
+    if not vid or not h:
+        return jsonify({"error": "vibe_id and hash required"}), 400
+    try:
+        weight = float(data.get("weight", 1.0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "weight must be a number"}), 400
+    weight = max(-1.0, min(1.0, weight))
+    _upsert_vibe_weight(vid, h, weight)
+    return jsonify({"vibe_id": vid, "hash": h, "weight": weight})
+
+
+@app.post("/vibes/remove")
+def vibes_remove():
+    """Remove a track from a vibe entirely (drop the membership link)."""
+    data = request.get_json(silent=True) or {}
+    vid, h = data.get("vibe_id"), data.get("hash")
+    if not vid or not h:
+        return jsonify({"error": "vibe_id and hash required"}), 400
     with _db_lock, closing(db()) as conn, conn as c:
-        c.execute("INSERT OR IGNORE INTO vibe_tracks VALUES(?,?)", (vid, h))
-    return jsonify({"added": True})
+        c.execute("DELETE FROM vibe_tracks WHERE vibe_id=? AND hash=?", (vid, h))
+    return jsonify({"removed": True})
+
+
+@app.get("/vibes/<int:vid>/members")
+def vibes_members(vid):
+    """Member tracks of a vibe with their current weights, for the weight editor.
+    Ordered strongest-pull first."""
+    with _db_lock, closing(db()) as conn, conn as c:
+        rows = c.execute(
+            "SELECT vt.hash, vt.weight, t.title, t.filename FROM vibe_tracks vt "
+            "LEFT JOIN tracks t ON t.hash=vt.hash WHERE vt.vibe_id=? "
+            "ORDER BY vt.weight DESC", (vid,)).fetchall()
+    return jsonify([{"hash": r[0],
+                     "weight": 1.0 if r[1] is None else round(float(r[1]), 3),
+                     "title": r[2], "filename": r[3]} for r in rows])
 
 
 @app.get("/vibes/match/<h>")

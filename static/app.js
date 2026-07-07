@@ -657,14 +657,16 @@ function finishRow(row, data, file){
       return `<i style="width:${(s.score/tot*100).toFixed(1)}%;background-color:${col};${tex}"
           title="${escapeHtml(s.style)} ${(s.score*100).toFixed(0)}%"></i>`;
     }).join('');
-    const itemsHtml = shown.map(s => {
+    const itemsHtml = shown.map((s, i) => {
       const col = s.other ? OTHER_COLOR : colorFor(s.style);
       const shp = s.other ? 'hx' : styleInfo(s.style).shape;
       const click = s.other ? ''
         : ` class="sw ${shp} swc" data-genre="${escapeHtml(s.style)}" data-hex="${col}" title="click to recolor"`;
       const sw = s.other ? `<span class="sw ${shp}" style="background:${col}"></span>`
                          : `<span${click} style="background:${col}"></span>`;
-      return `<span>${sw}<b>${escapeHtml(s.style)}</b> ${pct(s.score)}%</span>`;
+      // top-3 non-Other styles get descending emphasis (#1 largest → #3 smallest)
+      const rank = (!s.other && i < 3) ? ` rank-${i + 1}` : '';
+      return `<span class="bd-item${rank}">${sw}<b>${escapeHtml(s.style)}</b> ${pct(s.score)}%</span>`;
     }).join('');
 
     let customHtml = '';
@@ -1291,7 +1293,55 @@ async function renderVibePanel(){
     rowEl.innerHTML =
       `<span class="vname">${escapeHtml(v.name)}</span>` +
       `<span class="vcount">${v.count} track${v.count===1?'':'s'}</span>` +
+      `<button class="vw-btn">weights</button>` +
       `<button class="pl-btn">playlist</button>`;
+
+    // weight editor: a -1..+1 slider per member track (Rocchio feedback)
+    const vwWrap = document.createElement('div');
+    vwWrap.className = 'vibe-weights';
+    vwWrap.style.display = 'none';
+    rowEl.querySelector('.vw-btn').addEventListener('click', async () => {
+      if (vwWrap.style.display !== 'none'){ vwWrap.style.display = 'none'; return; }
+      vwWrap.style.display = '';
+      vwWrap.innerHTML = '<div class="vw-track">loading members…</div>';
+      const r = await fetch(`/vibes/${v.id}/members`);
+      const members = r.ok ? await r.json() : [];
+      if (!members.length){
+        vwWrap.innerHTML = '<div class="vw-track">no tracks yet — add some with “+ vibe” on a track.</div>';
+        return;
+      }
+      vwWrap.innerHTML = '';
+      for (const t of members){
+        const d = document.createElement('div');
+        d.className = 'vw-track';
+        const name = t.title || t.filename || t.hash.slice(0, 10);
+        d.innerHTML =
+          `<b title="${escapeHtml(name)}">${escapeHtml(name)}</b>` +
+          `<input type="range" min="-1" max="1" step="0.1" value="${t.weight}">` +
+          `<span class="vw-val"></span>` +
+          `<button class="vw-rm" title="remove from vibe">✕</button>`;
+        const slider = d.querySelector('input');
+        const val = d.querySelector('.vw-val');
+        const paint = () => {
+          const w = parseFloat(slider.value);
+          val.textContent = (w > 0 ? '+' : '') + w.toFixed(1);
+          val.className = 'vw-val ' + (w > 0 ? 'pos' : w < 0 ? 'neg' : '');
+        };
+        paint();
+        slider.addEventListener('input', paint);
+        slider.addEventListener('change', () => fetch('/vibes/weight', {method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({vibe_id: v.id, hash: t.hash, weight: parseFloat(slider.value)})}));
+        d.querySelector('.vw-rm').addEventListener('click', async () => {
+          await fetch('/vibes/remove', {method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({vibe_id: v.id, hash: t.hash})});
+          d.remove();
+        });
+        vwWrap.appendChild(d);
+      }
+    });
+
     const plWrap = document.createElement('div');
     plWrap.className = 'vibe-playlist';
     plWrap.style.display = 'none';
@@ -1338,6 +1388,7 @@ async function renderVibePanel(){
       }
     });
     vibeBody.appendChild(rowEl);
+    vibeBody.appendChild(vwWrap);
     vibeBody.appendChild(plWrap);
   }
   vibeBody.insertAdjacentHTML('beforeend',
@@ -1355,15 +1406,37 @@ async function renderVibeMatches(row, hash){
     const r = await fetch(`/vibes/match/${hash}`);
     const holder = document.createElement('div');
     holder.className = 'vibematches';
-    let inner = '';
+    async function feedback(vid, weight){
+      // per-song 👍/👎: sets THIS track's weight inside that vibe (Rocchio),
+      // then re-ranks -- 👍 pulls the vibe toward the song, 👎 pushes it away.
+      await fetch('/vibes/weight', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({vibe_id: vid, hash, weight})});
+      renderVibeMatches(row, hash);
+    }
     if (r.ok){
       const matches = (await r.json()).filter(m => m.sim >= 0.55).slice(0, 3);
       if (matches.length){
-        inner = 'vibes: ' + matches.map(m =>
-          `<b>${escapeHtml(m.name)}</b> ${(m.sim*100).toFixed(0)}%`).join(' · ') + ' ';
+        const lead = document.createElement('span');
+        lead.className = 'vm-lead'; lead.textContent = 'vibes:';
+        holder.appendChild(lead);
+        matches.forEach((m, i) => {
+          const vm = document.createElement('span');
+          vm.className = `vibematch rank-${i + 1}`;
+          vm.innerHTML = `<b>${escapeHtml(m.name)}</b> ${(m.sim*100).toFixed(0)}%`;
+          const up = document.createElement('button');
+          up.className = 'vm-thumb'; up.textContent = '👍';
+          up.title = `more like this — strengthen "${m.name}"`;
+          up.addEventListener('click', () => feedback(m.id, 1.0));
+          const down = document.createElement('button');
+          down.className = 'vm-thumb'; down.textContent = '👎';
+          down.title = `not this — push "${m.name}" away`;
+          down.addEventListener('click', () => feedback(m.id, -0.8));
+          vm.append(' ', up, down);
+          holder.appendChild(vm);
+        });
       }
     }
-    holder.innerHTML = inner;
     const addBtn = document.createElement('button');
     addBtn.className = 'addvibe-btn';
     addBtn.textContent = '+ vibe';
