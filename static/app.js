@@ -1548,3 +1548,466 @@ function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, c =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+
+/* ===================================================================
+   Genre Map -- 3D constellation of the whole scanned library.
+   Tracks float in a rotating 3D point-cloud on black; depth drives
+   size + brightness. Two layouts (regions / galaxy). Selecting a point
+   opens its popup and pulls up a random one of its closest matches.
+   Canvas 2D with a hand-rolled perspective projection (no libraries).
+   =================================================================== */
+(() => {
+  const stage    = document.getElementById('map-stage');
+  const canvas   = document.getElementById('map-canvas');
+  const legendEl = document.getElementById('map-legend');
+  const popEl    = document.getElementById('map-pop');
+  const searchEl = document.getElementById('map-search');
+  const suggestEl= document.getElementById('map-suggest');
+  const countMap = document.getElementById('map-count');
+  const resetB   = document.getElementById('map-reset');
+  const modeEl   = document.getElementById('map-mode');
+  const tabsEl   = document.getElementById('tabs');
+  if (!tabsEl || !canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  let NODES = [], EDGES = [], FAMS = [], COUNTS = {}, CENTROIDS = {};
+  const byHash = new Map();
+  let mapMode = 'regions';                 // 'regions' | 'galaxy'
+  let selHash = null;
+  let simCache = [];                       // last popup's /similar result
+
+  let W = 0, H = 0, DPR = 1;
+  const rot = { x: -0.15, y: 0.5 };        // orbit angles
+  const view = { zoom: 1, panx: 0, pany: 0 };
+  let spinning = true, running = false, rafId = null;
+  let anim = null;                         // camera tween
+  const proj = new Map();                  // hash -> {sx,sy,z,r} for this frame
+  const CAM = 2.7;                         // camera distance (world units)
+
+  /* -- deterministic RNG so a track's spot is stable across reloads -- */
+  function rng(seed){
+    let h = 1779033703 ^ seed.length;
+    for (let i=0;i<seed.length;i++){
+      h = Math.imul(h ^ seed.charCodeAt(i), 3432918353); h = (h<<13)|(h>>>19);
+    }
+    let a = h >>> 0;
+    return () => {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a>>>15), 1 | a);
+      t = (t + Math.imul(t ^ (t>>>7), 61 | t)) ^ t;
+      return ((t ^ (t>>>14)) >>> 0) / 4294967296;
+    };
+  }
+  function hueOf(fam){
+    let h = 0; for (let i=0;i<fam.length;i++) h = (h*31 + fam.charCodeAt(i)) | 0;
+    return ((h % 360) + 360) % 360;
+  }
+  const famCss = fam => `hsl(${hueOf(fam)} 62% 62%)`;
+  const durfmt = s => { if (s==null) return '--'; s=Math.round(s);
+    return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); };
+  const keyfmt = n => n.camelot
+    ? `${n.camelot} ${n.key||''} ${(n.scale||'').slice(0,3)}`.trim()
+    : (n.key ? `${n.key} ${(n.scale||'').slice(0,3)}`.trim() : '--');
+  const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+  const pctl = (arr,p) => { if(!arr.length) return 1;
+    const s=arr.slice().sort((x,y)=>x-y);
+    return s[Math.min(s.length-1, Math.floor(p*(s.length-1)))] || 1; };
+
+  /* ---- build 3-D positions for the current mode -------------------- */
+  function layout(){
+    byHash.clear();
+    for (const n of NODES){
+      n.fam = familyOf(n.style || n.styles[0] || 'Other') || 'Other';
+      n.hue = hueOf(n.fam);
+      byHash.set(n.hash, n);
+    }
+    COUNTS = {};
+    for (const n of NODES) COUNTS[n.fam] = (COUNTS[n.fam]||0)+1;
+    FAMS = Object.keys(COUNTS).sort((a,b)=>COUNTS[b]-COUNTS[a]);
+    const NC = (NODES.find(n=>n.e)||{}).e?.length || 0;
+
+    if (mapMode === 'galaxy'){
+      // position == first 3 PCA axes -> a pure 3-D sonic galaxy
+      const p = [0,1,2].map(j => pctl(NODES.map(n=>Math.abs(n.e?n.e[j]:0)),0.96)||1);
+      for (const n of NODES){
+        const r = rng(n.hash);
+        n.x3 = clamp((n.e?n.e[0]:0)/p[0],-1.2,1.2) + (r()-0.5)*0.04;
+        n.y3 = clamp((n.e?n.e[1]:0)/p[1],-1.2,1.2) + (r()-0.5)*0.04;
+        n.z3 = clamp((n.e?n.e[2]:0)/p[2],-1.2,1.2) + (r()-0.5)*0.04;
+        n.ph = r()*6.28;
+      }
+    } else {
+      // regions: biggest family at the core, the rest on a Fibonacci sphere;
+      // members offset in 3-D by their 3 highest within-family-variance axes.
+      const anchors = {};
+      const big = FAMS[0];
+      anchors[big] = { x:0, y:0, z:0 };
+      const rest = FAMS.slice(1);
+      rest.forEach((f,i) => {
+        const k = i + 0.5;
+        const phi = Math.acos(1 - 2*k/rest.length);
+        const th  = Math.PI * (1 + Math.sqrt(5)) * k;
+        anchors[f] = { x:0.82*Math.cos(th)*Math.sin(phi),
+                       y:0.82*Math.sin(th)*Math.sin(phi),
+                       z:0.82*Math.cos(phi) };
+      });
+      // per-family: pick 3 highest-variance components + their p90 spreads
+      const fa = {};
+      for (const f of FAMS){
+        const mem = NODES.filter(n=>n.fam===f && n.e);
+        const mean = new Array(NC).fill(0), varc = new Array(NC).fill(0);
+        for (const n of mem) for (let j=0;j<NC;j++) mean[j]+=n.e[j];
+        for (let j=0;j<NC;j++) mean[j]/=(mem.length||1);
+        for (const n of mem) for (let j=0;j<NC;j++) varc[j]+=(n.e[j]-mean[j])**2;
+        const ord = varc.map((v,j)=>[v,j]).sort((a,b)=>b[0]-a[0]);
+        const ax = ord.map(o=>o[1]).slice(0,3);
+        while (ax.length<3) ax.push(ax[0]||0);
+        const pc = ax.map(j => pctl(mem.map(n=>Math.abs(n.e[j]-mean[j])),0.90));
+        fa[f] = { ax, mean, pc };
+      }
+      for (const n of NODES){
+        const a = anchors[n.fam], f = fa[n.fam];
+        const spread = 0.07 + Math.sqrt(COUNTS[n.fam]) * 0.019;
+        const r = rng(n.hash);
+        const loc = j => n.e && f ? clamp((n.e[f.ax[j]]-f.mean[f.ax[j]])/f.pc[j], -1.15, 1.15)
+                                  : (r()-0.5);
+        n.x3 = a.x + loc(0)*spread + (r()-0.5)*0.02;
+        n.y3 = a.y + loc(1)*spread + (r()-0.5)*0.02;
+        n.z3 = a.z + loc(2)*spread + (r()-0.5)*0.02;
+        n.ph = r()*6.28;
+      }
+    }
+    // family label anchors = member centroid (3-D)
+    CENTROIDS = {};
+    const acc = {}; for (const f of FAMS) acc[f] = {x:0,y:0,z:0,c:0};
+    for (const n of NODES){ const a=acc[n.fam]; a.x+=n.x3; a.y+=n.y3; a.z+=n.z3; a.c++; }
+    for (const f of FAMS){ const a=acc[f];
+      CENTROIDS[f] = { x:a.x/a.c, y:a.y/a.c, z:a.z/a.c, n:COUNTS[f] }; }
+
+    buildLegend();
+    countMap.textContent = `${NODES.length} tracks · ${FAMS.length} genres · ${mapMode}`;
+  }
+
+  function buildLegend(){
+    legendEl.innerHTML = FAMS.map(f =>
+      `<span class="leg"><span class="dot" style="background:${famCss(f)}"></span>${escapeHtml(f)} ${COUNTS[f]}</span>`
+    ).join('');
+  }
+
+  /* ---- canvas sizing ----------------------------------------------- */
+  function resize(){
+    DPR = Math.min(2, window.devicePixelRatio || 1);
+    W = stage.clientWidth; H = stage.clientHeight;
+    canvas.width = Math.round(W*DPR); canvas.height = Math.round(H*DPR);
+    canvas.style.width = W+'px'; canvas.style.height = H+'px';
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+
+  /* ---- render one frame -------------------------------------------- */
+  function frame(now){
+    if (!running) return;
+    const t = now/1000;
+    if (spinning && !anim) rot.y += 0.0021;      // gentle idle spin
+    if (anim){
+      const p = Math.min(1,(now-anim.t0)/anim.dur), e = p<.5?4*p*p*p:1-Math.pow(-2*p+2,3)/2;
+      rot.x = anim.f.rx + (anim.t.rx-anim.f.rx)*e;
+      rot.y = anim.f.ry + (anim.t.ry-anim.f.ry)*e;
+      view.zoom = anim.f.z + (anim.t.z-anim.f.z)*e;
+      view.panx = anim.f.px + (anim.t.px-anim.f.px)*e;
+      view.pany = anim.f.py + (anim.t.py-anim.f.py)*e;
+      if (p>=1) anim = null;
+    }
+    const cy=Math.cos(rot.y), sy=Math.sin(rot.y), cx=Math.cos(rot.x), sx=Math.sin(rot.x);
+    const DISP = Math.min(W,H)*0.40*view.zoom;
+    const cxp = W/2 + view.panx, cyp = H/2 + view.pany;
+
+    // project every node
+    proj.clear();
+    const order = [];
+    for (const n of NODES){
+      const x =  n.x3*cy + n.z3*sy;
+      const z = -n.x3*sy + n.z3*cy;
+      const y2 = n.y3*cx - z*sx;
+      const z2 = n.y3*sx + z*cx;            // depth: bigger = nearer
+      const dist = CAM - z2;
+      const persp = CAM / dist;
+      const sxp = cxp + x*persp*DISP;
+      const syp = cyp + y2*persp*DISP;
+      const depth = clamp((z2+1.15)/2.3, 0, 1);
+      const r = clamp(4.2*persp*Math.sqrt(view.zoom), 1.2, 46);
+      proj.set(n.hash, { sx:sxp, sy:syp, z:z2, r, depth, node:n });
+      order.push(n.hash);
+    }
+    order.sort((a,b)=> proj.get(a).z - proj.get(b).z);   // far -> near
+
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle = '#000'; ctx.fillRect(0,0,W,H);
+
+    // edges
+    ctx.lineWidth = 1;
+    for (const ed of EDGES){
+      const a = proj.get(ed.a), b = proj.get(ed.b);
+      if (!a || !b) continue;
+      let op;
+      if (selHash) op = (ed.a===selHash||ed.b===selHash) ? 0.85 : 0.04;
+      else op = 0.05 + 0.11*Math.min(a.depth,b.depth);
+      if (op < 0.02) continue;
+      const hot = selHash && (ed.a===selHash||ed.b===selHash);
+      ctx.strokeStyle = hot ? `rgba(86,180,233,${op})` : `rgba(120,135,165,${op})`;
+      ctx.beginPath(); ctx.moveTo(a.sx,a.sy); ctx.lineTo(b.sx,b.sy); ctx.stroke();
+    }
+
+    // family labels (faint, projected at centroid)
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    for (const f of FAMS){
+      const c = CENTROIDS[f];
+      const x =  c.x*cy + c.z*sy, z = -c.x*sy + c.z*cy;
+      const y2 = c.y*cx - z*sx, z2 = c.y*sx + z*cx;
+      const persp = CAM/(CAM - z2);
+      const sxp = cxp + x*persp*DISP, syp = cyp + y2*persp*DISP;
+      const fs = Math.min(46, 15 + c.n*1.1) * persp;
+      ctx.font = `800 ${fs}px Syne, sans-serif`;
+      ctx.fillStyle = `rgba(221,227,238,${0.05 + 0.06*clamp((z2+1.15)/2.3,0,1)})`;
+      ctx.fillText(f.toUpperCase(), sxp, syp);
+    }
+
+    // nodes far -> near
+    for (const h of order){
+      const p = proj.get(h), n = p.node;
+      const tw = 0.9 + 0.1*Math.sin(t*1.6 + n.ph);
+      const light = (26 + 44*p.depth) * tw;
+      ctx.globalAlpha = 0.45 + 0.55*p.depth;
+      ctx.beginPath(); ctx.arc(p.sx, p.sy, p.r, 0, 6.2832);
+      ctx.fillStyle = `hsl(${n.hue} 64% ${clamp(light,18,82)}%)`;
+      ctx.fill();
+      if (h === selHash){
+        ctx.globalAlpha = 1;
+        ctx.beginPath(); ctx.arc(p.sx, p.sy, p.r+3.5, 0, 6.2832);
+        ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+    rafId = requestAnimationFrame(frame);
+  }
+  function startLoop(){ if(!running){ running=true; rafId=requestAnimationFrame(frame); } }
+  function stopLoop(){ running=false; if(rafId) cancelAnimationFrame(rafId); rafId=null; }
+
+  /* ---- interaction: orbit / zoom / click --------------------------- */
+  let dragging=false, moved=false, lx=0, ly=0;
+  canvas.addEventListener('pointerdown', e => {
+    dragging=true; moved=false; lx=e.clientX; ly=e.clientY;
+    canvas.classList.add('grabbing'); canvas.setPointerCapture(e.pointerId); anim=null;
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
+    if (Math.abs(dx)+Math.abs(dy) > 2) moved=true;
+    rot.y += dx*0.006; rot.x = clamp(rot.x + dy*0.006, -1.3, 1.3);
+  });
+  const endDrag = e => { dragging=false; canvas.classList.remove('grabbing');
+    try{ canvas.releasePointerCapture(e.pointerId); }catch(_){} };
+  canvas.addEventListener('pointerup', e => {
+    endDrag(e);
+    if (!moved){                                   // treat as click -> hit test
+      const r = canvas.getBoundingClientRect();
+      const mx = e.clientX-r.left, my = e.clientY-r.top;
+      let best=null, bz=-Infinity;
+      for (const [h,p] of proj){
+        if (Math.hypot(mx-p.sx, my-p.sy) <= p.r+5 && p.z>bz){ bz=p.z; best=h; }
+      }
+      if (best) selectNode(best); else closePopup();
+    }
+  });
+  canvas.addEventListener('pointercancel', endDrag);
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault(); anim=null;
+    view.zoom = clamp(view.zoom * (e.deltaY<0?1.12:1/1.12), 0.35, 5);
+  }, { passive:false });
+
+  /* ---- select + camera fly ----------------------------------------- */
+  function selectNode(hash){
+    const n = byHash.get(hash); if (!n) return;
+    selHash = hash;
+    spinning = false;                              // hold still while focused
+    // rotate the cloud so this node faces the camera, offset left of the popup
+    const ry = Math.atan2(-n.x3, n.z3);
+    const rx = Math.atan2(n.y3, Math.hypot(n.x3, n.z3));
+    anim = { f:{rx:rot.x,ry:rot.y,z:view.zoom,px:view.panx,py:view.pany},
+             t:{rx, ry, z:Math.max(1.6,view.zoom), px:-W*0.14, py:0},
+             t0:performance.now(), dur:640 };
+    openPopup(n);
+  }
+
+  async function openPopup(n){
+    const meta = [
+      n.style ? `<span><b>${escapeHtml(n.style)}</b> ${(n.score*100).toFixed(0)}%</span>` : '',
+      n.bpm!=null ? `<span><b>${Math.round(n.bpm)}</b> bpm</span>` : '',
+      `<span>${escapeHtml(keyfmt(n))}</span>`,
+      `<span>${durfmt(n.duration)}</span>`,
+    ].join('');
+    const other = (n.styles||[]).filter(s=>s && s!==n.style);
+    popEl.innerHTML = `
+      <button class="pop-x" title="close">close ✕</button>
+      <span class="pop-fam" style="background:${famCss(n.fam)}">${escapeHtml(n.fam)}</span>
+      <div class="pop-title">${escapeHtml(n.title)}</div>
+      ${n.artist ? `<div class="pop-artist">${escapeHtml(n.artist)}</div>` : ''}
+      <div class="pop-meta">${meta}</div>
+      <div id="pop-pick"><div class="pop-bar" style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--dim)">finding a match…</div></div>
+      ${other.length ? `<div class="pop-h">also reads as</div>
+        <div class="pop-artists">${other.map(s=>`<span class="chip">${escapeHtml(s)}</span>`).join('')}</div>` : ''}
+      <div class="pop-h">similar artists</div>
+      <div class="pop-artists" id="pop-artists"><span class="pop-bar">…</span></div>
+      <div class="pop-h">similar tracks</div>
+      <div class="pop-sim" id="pop-sim"><span class="pop-bar">…</span></div>`;
+    popEl.hidden = false;
+    popEl.querySelector('.pop-x').onclick = closePopup;
+    try{
+      simCache = await fetch(`/similar/${n.hash}?k=12`).then(r=>r.ok?r.json():[]);
+    }catch(_){ simCache = []; }
+    renderPick();
+    renderSimilar(simCache);
+  }
+
+  // "pull up a random song among the ones that match it the most"
+  function renderPick(){
+    const box = document.getElementById('pop-pick'); if (!box) return;
+    const top = simCache.slice(0, 6);
+    if (!top.length){ box.innerHTML = ''; return; }
+    const pick = top[Math.floor((performance.now()*13 % 997)/997 * top.length) % top.length];
+    const nm = pick.artist ? `${pick.artist} – ${stripArtist(pick.title,pick.artist)}` : pick.title;
+    box.innerHTML = `
+      <div class="pop-pick" title="jump to this match">
+        <div class="pk-top">🎲 a match for you
+          <button class="pk-roll" title="another">⟳</button></div>
+        <div class="pk-name">${escapeHtml(nm)}</div>
+        <div class="pk-sub"><span>${escapeHtml(pick.style||'')}</span>
+          <span class="pct">${(pick.sim*100).toFixed(0)}% match</span></div>
+      </div>`;
+    box.querySelector('.pop-pick').onclick = ev => {
+      if (ev.target.closest('.pk-roll')) return;
+      if (byHash.has(pick.hash)) selectNode(pick.hash);
+    };
+    box.querySelector('.pk-roll').onclick = ev => { ev.stopPropagation(); renderPick(); };
+  }
+
+  function renderSimilar(sim){
+    const simEl = document.getElementById('pop-sim');
+    const artEl = document.getElementById('pop-artists');
+    if (!simEl) return;
+    if (!sim.length){ simEl.innerHTML='<span class="pop-bar">no other tracks yet</span>';
+                      if(artEl) artEl.innerHTML='<span class="pop-bar">--</span>'; return; }
+    simEl.innerHTML = sim.slice(0,8).map(s => {
+      const fam = familyOf(s.style||'') || 'Other';
+      const nm = s.artist ? `${s.artist} – ${stripArtist(s.title,s.artist)}` : s.title;
+      return `<div class="sim-row" data-h="${s.hash}">
+        <span class="dot" style="background:${famCss(fam)}"></span>
+        <span class="nm" title="${escapeHtml(s.title)}">${escapeHtml(nm)}</span>
+        <span class="pct">${(s.sim*100).toFixed(0)}%</span></div>`;
+    }).join('');
+    simEl.querySelectorAll('.sim-row').forEach(row =>
+      row.onclick = () => { const h=row.getAttribute('data-h'); if (byHash.has(h)) selectNode(h); });
+    const seen=new Set(), artists=[];
+    for (const s of sim){ const a=(s.artist||'').trim();
+      if (a && !seen.has(a.toLowerCase())){ seen.add(a.toLowerCase()); artists.push(a); }
+      if (artists.length>=6) break; }
+    if (artEl) artEl.innerHTML = artists.length
+      ? artists.map(a=>`<span class="chip">${escapeHtml(a)}</span>`).join('')
+      : '<span class="pop-bar">--</span>';
+  }
+  const stripArtist = (title, artist) =>
+    (artist && title.toLowerCase().startsWith(artist.toLowerCase()+' - '))
+      ? title.slice(artist.length+3) : title;
+
+  function closePopup(){
+    popEl.hidden = true; selHash = null; spinning = true;   // resume the spin
+  }
+
+  /* ---- search ------------------------------------------------------ */
+  let sugItems=[], sugIdx=-1;
+  function runSearch(q){
+    q = q.trim().toLowerCase();
+    if (!q){ suggestEl.hidden = true; return; }
+    const hits = NODES.filter(n =>
+      (`${n.title} ${n.artist} ${n.fam} ${n.style||''}`).toLowerCase().includes(q)
+    ).slice(0,8);
+    sugItems = hits; sugIdx = -1;
+    if (!hits.length){ suggestEl.innerHTML=`<div class="sug">no match</div>`; suggestEl.hidden=false; return; }
+    suggestEl.innerHTML = hits.map((n,i) =>
+      `<div class="sug" data-i="${i}">
+         <span class="dot" style="background:${famCss(n.fam)}"></span>
+         <span>${escapeHtml(n.title)}</span>
+         <span class="st">${escapeHtml(n.fam)}</span></div>`).join('');
+    suggestEl.hidden = false;
+    suggestEl.querySelectorAll('.sug').forEach(d =>
+      d.onclick = () => choose(+d.getAttribute('data-i')));
+  }
+  function choose(i){ const n=sugItems[i]; if(!n) return;
+    suggestEl.hidden=true; searchEl.value=n.title; selectNode(n.hash); }
+  searchEl && searchEl.addEventListener('input', e => runSearch(e.target.value));
+  searchEl && searchEl.addEventListener('keydown', e => {
+    if (suggestEl.hidden) return;
+    if (e.key==='ArrowDown'||e.key==='ArrowUp'){ e.preventDefault();
+      sugIdx=(sugIdx+(e.key==='ArrowDown'?1:-1)+sugItems.length)%sugItems.length;
+      suggestEl.querySelectorAll('.sug').forEach((d,i)=>d.classList.toggle('active',i===sugIdx));
+    } else if (e.key==='Enter'){ e.preventDefault(); choose(sugIdx>=0?sugIdx:0); }
+    else if (e.key==='Escape'){ suggestEl.hidden=true; }
+  });
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.map-search-wrap')) suggestEl.hidden = true;
+  });
+
+  function resetView(){
+    closePopup();
+    view.zoom=1; view.panx=0; view.pany=0; rot.x=-0.15; spinning=true; anim=null;
+  }
+  resetB && resetB.addEventListener('click', resetView);
+  modeEl && modeEl.addEventListener('click', e => {
+    const b = e.target.closest('.mm'); if (!b || b.dataset.mode===mapMode) return;
+    mapMode = b.dataset.mode;
+    modeEl.querySelectorAll('.mm').forEach(m => m.classList.toggle('active', m===b));
+    closePopup(); suggestEl.hidden = true;
+    if (NODES.length){ layout(); resetView(); }
+  });
+
+  /* ---- load + tab wiring ------------------------------------------- */
+  async function ensureBuilt(){
+    try{
+      const data = await fetch('/map').then(r=>r.json());
+      NODES = data.nodes || []; EDGES = data.edges || [];
+      if (!NODES.length){ countMap.textContent='0 tracks -- scan some music first'; return; }
+      resize(); layout();
+    }catch(err){ countMap.textContent='failed to load map'; console.error('map load failed', err); }
+  }
+  function switchTo(viewName){
+    tabsEl.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.view===viewName));
+    showMap(viewName === 'map');
+    try{ history.replaceState(null,'', viewName==='map' ? '#map' : '#'); }catch(_){}
+  }
+  function showMap(on){
+    const deepHash = location.hash;
+    document.body.classList.toggle('view-map', on);
+    document.getElementById('map-view').hidden = !on;
+    if (on){
+      ensureBuilt().then(() => {
+        resize(); startLoop();
+        const m = /^#map=(.+)$/.exec(deepHash);
+        if (m && byHash.has(m[1])) selectNode(m[1]);
+      });
+    } else { stopLoop(); }
+  }
+  tabsEl.addEventListener('click', e => {
+    const b = e.target.closest('.tab'); if (!b) return; switchTo(b.dataset.view);
+  });
+  if (location.hash === '#galaxy'){
+    mapMode = 'galaxy';
+    modeEl && modeEl.querySelectorAll('.mm').forEach(m => m.classList.toggle('active', m.dataset.mode==='galaxy'));
+  }
+  if (location.hash === '#map' || location.hash.startsWith('#map=') || location.hash === '#galaxy')
+    switchTo('map');
+
+  let rz;
+  window.addEventListener('resize', () => {
+    if (!document.body.classList.contains('view-map') || !NODES.length) return;
+    clearTimeout(rz); rz = setTimeout(resize, 150);
+  });
+})();

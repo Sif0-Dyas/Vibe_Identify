@@ -31,8 +31,12 @@
   <div class="eq-bars" id="eq-bars"></div>
   <div class="hd-left">
     <h1>Vibe<em>dentify</em></h1>
-    <span class="sub">local · no internet · files untouched</span>
+    <span class="sub">Scan and Sort!</span>
   </div>
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-view="list" type="button">&#8801; List</button>
+    <button class="tab" data-view="map" type="button">&#10038; Map</button>
+  </nav>
   <div class="lensbar">
     <span class="lblab">identity</span>
     <select id="g-identity" title="overall genre read (side breakdown)">
@@ -62,6 +66,29 @@
     </div>
   </div>
 </main>
+
+<!-- interactive genre constellation of the whole library -->
+<section id="map-view" hidden aria-label="Genre map">
+  <div class="map-top">
+    <div class="map-search-wrap">
+      <input id="map-search" type="text" autocomplete="off" spellcheck="false"
+             placeholder="Search a track, artist, or genre&hellip;">
+      <div id="map-suggest" hidden></div>
+    </div>
+    <div class="map-mode" id="map-mode" title="layout: genre regions vs. pure sonic similarity">
+      <button class="mm active" data-mode="regions" type="button">&#9678; regions</button>
+      <button class="mm" data-mode="galaxy" type="button">&#10022; galaxy</button>
+    </div>
+    <span class="map-hint" id="map-count">loading&hellip;</span>
+    <span class="spacer"></span>
+    <button id="map-reset" type="button" title="reset view">&#9737; fit</button>
+  </div>
+  <div id="map-stage">
+    <canvas id="map-canvas"></canvas>
+    <div id="map-legend"></div>
+    <div id="map-pop" hidden></div>
+  </div>
+</section>
 
 <!-- bottom action bar -->
 <footer class="actionbar">

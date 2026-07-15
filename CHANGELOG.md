@@ -21,6 +21,23 @@ Keep the newest version on top. Under each version, group lines under
 _Work in progress lands here, then gets stamped with a version + date on release._
 
 ### Added
+- **Genre Map (3-D constellation view).** New **Map** tab (header `List | Map`)
+  renders the entire scanned library as a rotating 3-D point-cloud on black,
+  inspired by pulse.roots. Two new read-only routes: `GET /map` returns every
+  track (title, parsed artist, dominant style, bpm/key, and an 8-component PCA of
+  its embedding) plus each track's top-2 cosine-nearest-neighbour edges;
+  `GET /similar/<hash>?k=` returns the nearest tracks by embedding cosine.
+  Rendered on a **Canvas 2-D with a hand-rolled perspective projection** (no
+  libraries): the cloud auto-spins, drag to orbit, wheel to zoom; depth drives
+  node size + brightness. Two layouts, toggleable in-view: **regions** (genre
+  families as 3-D clusters — biggest family at the core, the rest on a Fibonacci
+  sphere — with members offset by their 3 highest within-family-variance PCA
+  axes) and **galaxy** (position = first 3 PCA axes, pure sonic similarity).
+  Search or click a point → the camera flies to that track and its neighbour web
+  lights up; the popup shows family, metadata, "also reads as", **similar
+  artists**, **similar tracks**, and a **🎲 "a match for you"** block that pulls
+  up a random one of the track's closest matches (with a re-roll). Colour-coded
+  legend, `#map` / `#map=<hash>` / `#galaxy` deep links. No new dependencies.
 - `CHANGELOG.md` (this file) and `README.md` project documentation.
 - **Audio preview player.** New read-only `GET /audio/<hash>` route streams a
   previously-analyzed track by content hash with HTTP Range support (serves only

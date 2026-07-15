@@ -1049,6 +1049,127 @@ def vibes_playlist(vid):
     return jsonify(out)
 
 
+# ---------------------------------------------------------------------------
+# Genre Map -- interactive constellation of the entire scanned library.
+# /map returns every track + nearest-neighbour edges; /similar/<h> powers the
+# popup. Both lean on the same 1280-d embeddings that drive vibes.
+# ---------------------------------------------------------------------------
+def _artist_of(title, filename):
+    """Best-effort artist: our titles follow 'Artist - Title'."""
+    base = (title or "") or (Path(filename).stem if filename else "")
+    return base.split(" - ", 1)[0].strip() if " - " in base else ""
+
+
+def _dominant_style(payload):
+    """Salience winner (v2 identity), falling back to the top flat style."""
+    sal = payload.get("salience") or []
+    if sal:
+        return sal[0].get("style"), round(float(sal[0].get("score", 0)), 4)
+    st = payload.get("styles") or []
+    if st:
+        return st[0].get("style"), round(float(st[0].get("score", 0)), 4)
+    return None, 0.0
+
+
+def _map_node(h, title, filename, payload):
+    p = payload if isinstance(payload, dict) else json.loads(payload)
+    style, score = _dominant_style(p)
+    return {
+        "hash": h,
+        "title": title or (Path(filename).stem if filename else h[:8]),
+        "artist": _artist_of(title, filename),
+        "style": style,
+        "score": score,
+        "styles": [s.get("style") for s in (p.get("styles") or [])[:3]],
+        "bpm": p.get("bpm"),
+        "key": p.get("key"),
+        "scale": p.get("scale"),
+        "camelot": p.get("camelot"),
+        "duration": p.get("duration"),
+    }
+
+
+@app.get("/map")
+def map_route():
+    import numpy as np
+    with _db_lock, closing(db()) as conn, conn as c:
+        rows = c.execute(
+            "SELECT hash, title, filename, payload, embedding FROM tracks").fetchall()
+    nodes, embs, emb_idx = [], [], []
+    for h, title, filename, payload, blob in rows:
+        nodes.append(_map_node(h, title, filename, payload))
+        if blob is not None:
+            embs.append(np.frombuffer(blob, dtype=np.float32))
+            emb_idx.append(len(nodes) - 1)
+    edges = []
+    if len(embs) >= 2:
+        M = np.vstack(embs).astype(np.float32)
+        # (1) similarity edges from cosine
+        norm = np.linalg.norm(M, axis=1, keepdims=True)
+        norm[norm == 0] = 1.0
+        Mn = M / norm
+        sims = Mn @ Mn.T
+        np.fill_diagonal(sims, -1.0)
+        K = 2                                    # nearest neighbours per node
+        seen = set()
+        for a in range(len(emb_idx)):
+            for b in np.argsort(-sims[a])[:K]:
+                s = float(sims[a, b])
+                if s <= 0:
+                    continue
+                key = (min(a, b), max(a, b))
+                if key in seen:
+                    continue
+                seen.add(key)
+                edges.append({"a": nodes[emb_idx[a]]["hash"],
+                              "b": nodes[emb_idx[int(b)]]["hash"],
+                              "sim": round(s, 3)})
+        # (2) PCA of the embeddings -> a few sonic coordinates per track. The
+        #     client picks, per genre region, the 2 components that best spread
+        #     THAT region's members, so a big single-genre cluster (e.g. all
+        #     dubstep) still fans out by how the tracks actually sound.
+        Mc = M - M.mean(axis=0, keepdims=True)
+        try:
+            _, _, Vt = np.linalg.svd(Mc, full_matrices=False)
+            ncomp = int(min(8, Vt.shape[0]))
+            proj = Mc @ Vt[:ncomp].T             # (m, ncomp)
+            std = proj.std(axis=0, keepdims=True)
+            std[std == 0] = 1.0
+            proj = proj / std                    # standardise each component
+            for k, i in enumerate(emb_idx):
+                nodes[i]["e"] = [round(float(v), 4) for v in proj[k]]
+        except np.linalg.LinAlgError:
+            pass
+    return jsonify({"nodes": nodes, "edges": edges})
+
+
+@app.get("/similar/<h>")
+def similar_route(h):
+    """Top-k nearest tracks to <h> by embedding cosine (for the map popup)."""
+    import numpy as np
+    k = max(1, min(int(request.args.get("k", 8)), 40))
+    target = track_embedding(h)
+    if target is None:
+        return jsonify({"error": "track not in database"}), 404
+    with _db_lock, closing(db()) as conn, conn as c:
+        rows = c.execute(
+            "SELECT hash, title, filename, payload, embedding FROM tracks "
+            "WHERE embedding IS NOT NULL AND hash != ?", (h,)).fetchall()
+    out = []
+    for hh, title, filename, payload, blob in rows:
+        emb = np.frombuffer(blob, dtype=np.float32)
+        p = json.loads(payload)
+        style, _ = _dominant_style(p)
+        out.append({"hash": hh,
+                    "title": title or (Path(filename).stem if filename else hh[:8]),
+                    "artist": _artist_of(title, filename),
+                    "style": style,
+                    "bpm": p.get("bpm"), "camelot": p.get("camelot"),
+                    "sim": round(cosine(target, emb), 4)})
+    out.sort(key=lambda x: -x["sim"])
+    return jsonify(out[:k])
+
+
 @app.get("/")
 def index():
     return render_template("index.html")
