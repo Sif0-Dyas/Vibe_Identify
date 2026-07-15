@@ -1570,7 +1570,7 @@ function escapeHtml(s){
   if (!tabsEl || !canvas) return;
   const ctx = canvas.getContext('2d');
 
-  let NODES = [], EDGES = [], FAMS = [], COUNTS = {}, CENTROIDS = {};
+  let NODES = [], EDGES = [], FAMS = [], COUNTS = {}, CENTROIDS = {}, STYLE_CENTROIDS = {};
   const byHash = new Map();
   let mapMode = 'regions';                 // 'regions' | 'galaxy'
   let selHash = null;
@@ -1651,6 +1651,31 @@ function escapeHtml(s){
                        y:0.82*Math.sin(th)*Math.sin(phi),
                        z:0.82*Math.cos(phi) };
       });
+      // sub-clusters: within each family, group tracks by dominant style
+      // (subgenre) and give each style its own sub-anchor on a small sphere
+      // around the family anchor -- so Dubstep and Drum n Bass separate visibly
+      // inside Bass Music instead of blending together.
+      const styleAnchors = {}, styleCount = {};
+      for (const f of FAMS){
+        const cnt = {};
+        for (const n of NODES) if (n.fam===f){ const s=n.style||f; cnt[s]=(cnt[s]||0)+1; }
+        const styles = Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a]);
+        const famSpread = 0.07 + Math.sqrt(COUNTS[f]) * 0.019;
+        const subR = famSpread * (styles.length>1 ? 0.85 : 0);
+        styles.forEach((s,i) => {
+          styleCount[`${f}||${s}`] = cnt[s];
+          const a = anchors[f];
+          if (styles.length===1){ styleAnchors[`${f}||${s}`] = {x:a.x,y:a.y,z:a.z}; return; }
+          const k = i + 0.5;
+          const phi = Math.acos(1 - 2*k/styles.length);
+          const th  = Math.PI * (1 + Math.sqrt(5)) * k;
+          styleAnchors[`${f}||${s}`] = {
+            x: a.x + subR*Math.cos(th)*Math.sin(phi),
+            y: a.y + subR*Math.sin(th)*Math.sin(phi),
+            z: a.z + subR*Math.cos(phi),
+          };
+        });
+      }
       // per-family: pick 3 highest-variance components + their p90 spreads
       const fa = {};
       for (const f of FAMS){
@@ -1666,14 +1691,18 @@ function escapeHtml(s){
         fa[f] = { ax, mean, pc };
       }
       for (const n of NODES){
-        const a = anchors[n.fam], f = fa[n.fam];
-        const spread = 0.07 + Math.sqrt(COUNTS[n.fam]) * 0.019;
+        const s = n.style || n.fam;
+        const a = styleAnchors[`${n.fam}||${s}`] || anchors[n.fam];
+        const f = fa[n.fam];
+        const famSpread = 0.07 + Math.sqrt(COUNTS[n.fam]) * 0.019;
+        // tight sub-cluster so subgenres stay distinct
+        const spread = Math.min(famSpread*0.42, 0.03 + Math.sqrt(styleCount[`${n.fam}||${s}`]||1)*0.011);
         const r = rng(n.hash);
         const loc = j => n.e && f ? clamp((n.e[f.ax[j]]-f.mean[f.ax[j]])/f.pc[j], -1.15, 1.15)
                                   : (r()-0.5);
-        n.x3 = a.x + loc(0)*spread + (r()-0.5)*0.02;
-        n.y3 = a.y + loc(1)*spread + (r()-0.5)*0.02;
-        n.z3 = a.z + loc(2)*spread + (r()-0.5)*0.02;
+        n.x3 = a.x + loc(0)*spread + (r()-0.5)*0.012;
+        n.y3 = a.y + loc(1)*spread + (r()-0.5)*0.012;
+        n.z3 = a.z + loc(2)*spread + (r()-0.5)*0.012;
         n.ph = r()*6.28;
       }
     }
@@ -1683,6 +1712,20 @@ function escapeHtml(s){
     for (const n of NODES){ const a=acc[n.fam]; a.x+=n.x3; a.y+=n.y3; a.z+=n.z3; a.c++; }
     for (const f of FAMS){ const a=acc[f];
       CENTROIDS[f] = { x:a.x/a.c, y:a.y/a.c, z:a.z/a.c, n:COUNTS[f] }; }
+
+    // subgenre label anchors (regions only): centroid of each style sub-cluster
+    // with >=4 members -- these fade in as you zoom in (semantic zoom / LOD).
+    STYLE_CENTROIDS = {};
+    if (mapMode !== 'galaxy'){
+      const sacc = {};
+      for (const n of NODES){
+        const key = `${n.fam}||${n.style || n.fam}`;
+        if (!sacc[key]) sacc[key] = { x:0, y:0, z:0, c:0, style:n.style || n.fam };
+        const a = sacc[key]; a.x+=n.x3; a.y+=n.y3; a.z+=n.z3; a.c++;
+      }
+      for (const key in sacc){ const a = sacc[key];
+        if (a.c >= 4) STYLE_CENTROIDS[key] = { x:a.x/a.c, y:a.y/a.c, z:a.z/a.c, n:a.c, style:a.style }; }
+    }
 
     buildLegend();
     countMap.textContent = `${NODES.length} tracks · ${FAMS.length} genres · ${mapMode}`;
@@ -1757,18 +1800,36 @@ function escapeHtml(s){
       ctx.beginPath(); ctx.moveTo(a.sx,a.sy); ctx.lineTo(b.sx,b.sy); ctx.stroke();
     }
 
-    // family labels (faint, projected at centroid)
+    // Labels with semantic zoom (LOD): family names when zoomed out, subgenre
+    // names fading in as you zoom in. Galaxy mode has no hierarchy -> no fade.
     ctx.textAlign='center'; ctx.textBaseline='middle';
-    for (const f of FAMS){
-      const c = CENTROIDS[f];
-      const x =  c.x*cy + c.z*sy, z = -c.x*sy + c.z*cy;
+    const lod = (mapMode==='galaxy') ? 0 : clamp((view.zoom - 1.5) / (3.0 - 1.5), 0, 1);
+    const projPt = c => {
+      const x = c.x*cy + c.z*sy, z = -c.x*sy + c.z*cy;
       const y2 = c.y*cx - z*sx, z2 = c.y*sx + z*cx;
       const persp = CAM/(CAM - z2);
-      const sxp = cxp + x*persp*DISP, syp = cyp + y2*persp*DISP;
-      const fs = Math.min(46, 15 + c.n*1.1) * persp;
-      ctx.font = `800 ${fs}px Syne, sans-serif`;
-      ctx.fillStyle = `rgba(221,227,238,${0.05 + 0.06*clamp((z2+1.15)/2.3,0,1)})`;
-      ctx.fillText(f.toUpperCase(), sxp, syp);
+      return { sx: cxp + x*persp*DISP, sy: cyp + y2*persp*DISP, z2, persp };
+    };
+    // family labels -- fade back (but never fully vanish) as we zoom in
+    for (const f of FAMS){
+      const p = projPt(CENTROIDS[f]);
+      const depth = clamp((p.z2+1.15)/2.3, 0, 1);
+      const a = (0.18 + 0.16*depth) * (1 - 0.72*lod);
+      if (a < 0.02) continue;
+      ctx.font = `800 ${Math.min(46, 15 + CENTROIDS[f].n*1.1) * p.persp}px Syne, sans-serif`;
+      ctx.fillStyle = `rgba(221,227,238,${a})`;
+      ctx.fillText(f.toUpperCase(), p.sx, p.sy);
+    }
+    // subgenre labels -- fade in with zoom (tinted + mono, smaller)
+    if (lod > 0.01){
+      for (const key in STYLE_CENTROIDS){
+        const c = STYLE_CENTROIDS[key], p = projPt(c);
+        const depth = clamp((p.z2+1.15)/2.3, 0, 1);
+        const a = (0.16 + 0.2*depth) * lod;
+        ctx.font = `700 ${Math.min(24, 9 + c.n*0.45) * p.persp}px 'JetBrains Mono', monospace`;
+        ctx.fillStyle = `rgba(150,220,255,${a})`;
+        ctx.fillText(c.style.toUpperCase(), p.sx, p.sy);
+      }
     }
 
     // nodes far -> near
