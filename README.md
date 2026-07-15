@@ -1,12 +1,16 @@
 # Genre v2
 
+[![CI](https://github.com/Sif0-Dyas/Vibe_Identify/actions/workflows/ci.yml/badge.svg)](https://github.com/Sif0-Dyas/Vibe_Identify/actions/workflows/ci.yml)
+
 > Codename **Genre v2** (the DB, changelog, and this repo); the UI is branded
 > **Vibedentify**.
 
 A local music-genre analysis web app. Drop an audio file (or point it at a
 folder) and it identifies the genre using Essentia's Discogs-EffNet model across
 400 Discogs styles — plus BPM, musical key (Camelot), and a genre-colored
-fisheye waveform. Everything runs locally; no internet is used after the
+fisheye waveform. A second **Map** tab plots your whole scanned library as a
+rotating 3-D constellation you can search and explore by sonic similarity.
+Everything runs locally; no internet is used after the
 one-time model download, and **your music files are never modified** — analysis
 is read-only and training saves are copies.
 
@@ -73,11 +77,17 @@ FAKE_ANALYZER=1 python -m vibedentify    # instant fake results, no models (UI d
 
 Then open <http://localhost:5005> in your Windows browser.
 
-Run the tests (fast, no models needed):
+Run the tests and linter (fast, no models needed):
 
 ```bash
-pip install -r requirements-dev.txt && pytest
+pip install -r requirements-dev.txt
+pytest            # smoke tests (FAKE mode + throwaway DB)
+ruff check .      # lint
+ruff format .     # auto-format
 ```
+
+CI (GitHub Actions, `.github/workflows/ci.yml`) runs `ruff` + `pytest` on every
+push and pull request.
 
 For production, serve the WSGI app instead of the dev server:
 `gunicorn wsgi:app` (or `waitress-serve wsgi:app`).
@@ -87,9 +97,11 @@ deliberately opt into LAN/Tailscale access. The HTTP API assumes a trusted calle
 (routes read/scan/copy server-side paths), so only expose it beyond localhost
 intentionally.
 
-Environment variables: `MODEL_DIR` (model download dir), `GENRE_DB` (SQLite
-path), `CUSTOM_HEAD` (path to `custom_head.npz`), `GENRE_HOST` (bind address,
-default `127.0.0.1`), `FAKE_ANALYZER=1` (mock mode).
+Environment variables (all optional; see [`.env.example`](./.env.example)):
+`MODEL_DIR` (model download dir), `GENRE_DB` (SQLite path), `CUSTOM_HEAD` (path
+to `custom_head.npz`), `MAEST_MODEL` (MAEST graph filename), `GENRE_HOST` (bind
+address, default `127.0.0.1`), `MAX_UPLOAD_MB` (upload cap, default 512),
+`FAKE_ANALYZER=1` (mock mode).
 
 ---
 
@@ -146,6 +158,12 @@ and the breakdown so the two always agree.
   New tracks auto-show match %; a vibe's "playlist" scans the whole DB by cosine
   similarity to the vibe's centroid. Membership is **Rocchio-weighted** (−1..+1
   per track, driven by the per-song 👍/👎 and the slider editor).
+- **Genre map:** a **Map** tab renders the whole library as a rotating 3-D
+  point-cloud (Canvas, no libraries). Two layouts — *regions* (genre-family
+  clusters) and *galaxy* (pure embedding similarity) — with depth-driven size /
+  brightness, search-to-fly, and a popup showing similar artists/tracks plus a
+  🎲 random close match. Positions come from a PCA of the embeddings (`/map`),
+  nearest-neighbour lines and the popup from cosine similarity (`/similar`).
 - **Audio preview:** play/scrub any analyzed track through its waveform (one
   shared player; dropped files via blob URL, cached/batch tracks via `/audio`).
 - **Compare engines:** on-demand A/B of the EffNet CNN against the MAEST
@@ -167,6 +185,8 @@ and the breakdown so the two always agree.
 |---|---|---|
 | `/` | GET | UI shell |
 | `/analyze` | POST | single file upload → full analysis JSON (cache-first) |
+| `/map` | GET | every cached track (+ PCA coords) + nearest-neighbour edges, for the 3-D map |
+| `/similar/<h>` | GET | tracks nearest to `<h>` by embedding cosine (map popup) |
 | `/refine` | POST | single file → dense segment stream (~0.5 s hop) |
 | `/compare` | POST | file **or** `{filepath}` → EffNet vs MAEST per-style scores for live re-mixing (on-demand; never cached) |
 | `/batch` | POST | `{path, workers}` → NDJSON stream of results |
