@@ -5,6 +5,16 @@ __pycache__/
 .venv/
 venv/
 env/
+build/
+dist/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local secrets / config
+.env
 
 # Local data / models (large, machine-specific — see project notes)
 *.db

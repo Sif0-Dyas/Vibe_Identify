@@ -42,6 +42,7 @@ Dependencies:
 
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import sys
@@ -72,7 +73,11 @@ AUDIO_EXTS = {
 }
 FAKE = os.environ.get("FAKE_ANALYZER") == "1"
 
+log = logging.getLogger("vibedentify")
+
 app = Flask(__name__)
+# Guard against a giant upload exhausting memory (configurable, default 512 MB).
+app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_MB", "512")) * 1024 * 1024
 _lock = threading.Lock()          # TF model instances are shared and not thread-safe; hold during inference only
 
 # ----------------------------------------------------------------------------
@@ -189,7 +194,7 @@ def ensure_models():
     for name, url in MODELS.items():
         dest = MODEL_DIR / name
         if not (dest.exists() and dest.stat().st_size > 0):
-            print(f"  downloading {name} ...", flush=True)
+            log.info("downloading %s ...", name)
             urllib.request.urlretrieve(url, dest)
 
 
@@ -280,10 +285,10 @@ def get_custom_head():
                 head["labels"] = [str(x) for x in d["labels"]]
                 acc = float(d["val_acc"]) if "val_acc" in d else None
                 _custom["head"] = head    # publish only once fully built
-                print(f"custom head loaded: {head['labels']}"
-                      + (f"  (val acc {acc:.0%})" if acc else ""))
-            except Exception as exc:
-                print(f"could not load custom head: {exc}")
+                log.info("custom head loaded: %s%s", head["labels"],
+                         f"  (val acc {acc:.0%})" if acc else "")
+            except Exception:
+                log.warning("could not load custom head", exc_info=True)
         _custom["checked"] = True         # set last: don't try again either way
         return _custom["head"]
 
@@ -674,8 +679,9 @@ def analyze_route():
             return jsonify(payload)
     except UploadError as e:
         return jsonify({"error": str(e)}), e.status
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+    except Exception:
+        log.exception("request failed")
+        return jsonify({"error": "internal error"}), 500
 
 
 @app.post("/refine")
@@ -707,8 +713,9 @@ def refine_route():
             return jsonify({"segments": segments, "frames": frames, "hop_seconds": FINE_HOP_SECONDS})
     except UploadError as e:
         return jsonify({"error": str(e)}), e.status
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+    except Exception:
+        log.exception("request failed")
+        return jsonify({"error": "internal error"}), 500
 
 
 def _top_styles(vec, labels, k=6, thresh=0.02):
@@ -782,8 +789,9 @@ def compare_route():
             return jsonify(compare_engines(p))   # locks only its own inference pass
     except UploadError as e:
         return jsonify({"error": str(e)}), e.status
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+    except Exception:
+        log.exception("request failed")
+        return jsonify({"error": "internal error"}), 500
 
 
 @app.post("/save_training")
@@ -1210,9 +1218,10 @@ def batch_route():
             cache_put(h, path.name, str(path), title, payload, emb)
             payload.update({"ok": True, "hash": h, "cached": False})
             return payload
-        except Exception as exc:
+        except Exception:
+            log.exception("batch analysis failed for %s", path.name)
             return {"ok": False, "filename": path.name, "filepath": str(path),
-                    "error": str(exc)}
+                    "error": "analysis failed"}
 
     def generate():
         yield _json.dumps({"total": len(files)}) + "\n"
@@ -1231,7 +1240,11 @@ def batch_route():
 # ----------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     if FAKE:
-        print("FAKE_ANALYZER=1 -- serving fake results (GUI test mode, no Essentia).")
-    print("Genre v2 running -> http://localhost:5005")
+        log.info("FAKE_ANALYZER=1 -- serving fake results (GUI test mode, no Essentia).")
+    log.info("Genre v2 running -> http://localhost:5005")
     app.run(host=os.environ.get("GENRE_HOST", "127.0.0.1"), port=5005, debug=False, threaded=True)

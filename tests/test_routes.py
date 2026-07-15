@@ -1,0 +1,69 @@
+"""Smoke tests for the HTTP surface.
+
+Not exhaustive — these exist to catch the "a refactor silently broke a route"
+class of regression before it reaches the browser. They run in FAKE mode against
+an empty temp DB (see conftest.py).
+"""
+import io
+import struct
+import wave
+
+
+def test_index_serves_page(client):
+    r = client.get("/")
+    assert r.status_code == 200
+    assert b"Vibedentify" in r.data
+
+
+def test_map_empty_db(client):
+    r = client.get("/map")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body == {"nodes": [], "edges": []}
+
+
+def test_tags_empty(client):
+    r = client.get("/tags")
+    assert r.status_code == 200
+    assert isinstance(r.get_json(), list)
+
+
+def test_vibes_empty(client):
+    r = client.get("/vibes")
+    assert r.status_code == 200
+    assert isinstance(r.get_json(), list)
+
+
+def test_similar_unknown_hash_404(client):
+    r = client.get("/similar/deadbeefdeadbeef")
+    assert r.status_code == 404
+
+
+def test_save_training_requires_genre(client):
+    r = client.post("/save_training", data={})
+    assert r.status_code == 400
+
+
+def test_audio_unknown_hash_404(client):
+    r = client.get("/audio/deadbeef")
+    assert r.status_code == 404
+
+
+def _tiny_wav_bytes():
+    buf = io.BytesIO()
+    w = wave.open(buf, "w")
+    w.setnchannels(1)
+    w.setsampwidth(2)
+    w.setframerate(8000)
+    w.writeframes(struct.pack("<800h", *([0] * 800)))
+    w.close()
+    return buf.getvalue()
+
+
+def test_analyze_fake_returns_full_payload(client):
+    data = {"file": (io.BytesIO(_tiny_wav_bytes()), "probe.wav")}
+    r = client.post("/analyze", data=data, content_type="multipart/form-data")
+    assert r.status_code == 200
+    body = r.get_json()
+    for key in ("styles", "bpm", "hash", "waveform"):
+        assert key in body, f"missing {key} in analyze payload"
