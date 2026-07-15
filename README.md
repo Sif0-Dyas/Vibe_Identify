@@ -32,18 +32,28 @@ font).
 
 ```
 Genre Identifier/
-  genre_gui.py         ← Flask backend + all analysis logic (start here; top
-                         docstring is an architecture summary)
-  templates/index.html ← HTML shell (Flask renders this via render_template)
-  static/app.js        ← all frontend logic: lens system, row rendering, canvas
-  static/app.css       ← all styling (Winamp skin layered at the end)
-  CHANGELOG.md         ← version history — update on every notable change
-  README.md            ← this file
+  vibedentify/               ← the application package
+    __init__.py              ← create_app() app factory
+    __main__.py              ← `python -m vibedentify` dev-server entry point
+    config.py                ← env-derived configuration & constants
+    db.py                    ← SQLite: analysis cache, embeddings, vibes, tags
+    analysis.py              ← Essentia model plumbing + the analysis pipeline
+    routes.py                ← all HTTP routes (one Flask Blueprint)
+    templates/index.html     ← HTML shell (rendered via render_template)
+    static/app.js            ← frontend: lens system, row rendering, 3D map
+    static/app.css           ← all styling (Winamp skin layered at the end)
+    static/genre_families.json
+  wsgi.py                    ← WSGI entry point for production servers
+  tests/                     ← pytest smoke tests (run in FAKE mode)
+  requirements.txt · requirements-dev.txt · pyproject.toml
+  .env.example               ← documented environment variables
+  CHANGELOG.md · README.md · LICENSE
 ```
 
-> Flask serves `index.html` from `templates/` and CSS/JS from `static/`. The app
-> **will not run** if these files are flattened into the project root
-> (`render_template` 500s with `TemplateNotFound`, `/static/*` 404s).
+> `create_app()` uses `Flask(__name__)`, so Flask serves `index.html` from
+> `vibedentify/templates/` and CSS/JS from `vibedentify/static/`. Keep those two
+> folders **inside the package** — moving them out 500s `render_template`
+> (`TemplateNotFound`) and 404s `/static/*`.
 
 External, separate from this repo:
 - `embed_extract.py` + `train_head.py` — the custom-head training pipeline.
@@ -56,11 +66,21 @@ External, separate from this repo:
 ## Run
 
 ```bash
-python genre_gui.py                    # real Essentia analysis
-FAKE_ANALYZER=1 python genre_gui.py    # instant fake results, no models (UI dev)
+pip install -r requirements.txt         # first time only
+python -m vibedentify                    # real Essentia analysis
+FAKE_ANALYZER=1 python -m vibedentify    # instant fake results, no models (UI dev)
 ```
 
 Then open <http://localhost:5005> in your Windows browser.
+
+Run the tests (fast, no models needed):
+
+```bash
+pip install -r requirements-dev.txt && pytest
+```
+
+For production, serve the WSGI app instead of the dev server:
+`gunicorn wsgi:app` (or `waitress-serve wsgi:app`).
 
 The server binds `127.0.0.1` (localhost) by default; set `GENRE_HOST=0.0.0.0` to
 deliberately opt into LAN/Tailscale access. The HTTP API assumes a trusted caller

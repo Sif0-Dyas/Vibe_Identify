@@ -24,9 +24,11 @@ dev = ["pytest>=8,<9"]
 [project.urls]
 Repository = "https://github.com/Sif0-Dyas/Vibe_Identify"
 
-# Flat single-module layout for now (a package restructure is the next step).
 [tool.setuptools]
-py-modules = ["genre_gui"]
+packages = ["vibedentify"]
+
+[tool.setuptools.package-data]
+vibedentify = ["templates/*", "static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

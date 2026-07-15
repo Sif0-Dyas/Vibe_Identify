@@ -39,6 +39,25 @@ _Work in progress lands here, then gets stamped with a version + date on release
   up a random one of the track's closest matches (with a re-roll). Colour-coded
   legend, `#map` / `#map=<hash>` / `#galaxy` deep links. No new dependencies.
 - `CHANGELOG.md` (this file) and `README.md` project documentation.
+- Packaging & metadata: `requirements.txt`, `requirements-dev.txt`,
+  `pyproject.toml`, `.env.example`, and an MIT `LICENSE`.
+- A `pytest` smoke-test suite (`tests/`) exercising the HTTP surface in FAKE
+  mode against a throwaway DB.
+
+### Changed
+- **Restructured the backend into a package.** The ~1.2 k-line `genre_gui.py`
+  monolith is split into a `vibedentify/` package — `config.py`, `db.py`,
+  `analysis.py`, a single-Blueprint `routes.py`, and a `create_app()` factory
+  (`__init__.py`). New entry points: `python -m vibedentify` (dev server) and
+  `wsgi:app` (production). `templates/` and `static/` moved inside the package.
+  No route behaviour changed; the smoke suite verifies parity.
+
+### Fixed
+- Stop leaking raw exception strings to HTTP clients — log the real error and
+  return a generic message.
+- Removed a stray `<style>` tag from the top of `static/app.css`.
+- Added a `MAX_CONTENT_LENGTH` upload cap; replaced `print()` diagnostics with
+  the `logging` module.
 - **Audio preview player.** New read-only `GET /audio/<hash>` route streams a
   previously-analyzed track by content hash with HTTP Range support (serves only
   files recorded in the DB — not an arbitrary-file endpoint). Per-row UI: a
