@@ -375,7 +375,7 @@ PLAYER.audio.addEventListener('error',      () => { if (PLAYER.ctl) PLAYER.ctl.e
 function finishRow(row, data, file){
   row.classList.remove('pending');
   const styles = data.styles || [];
-  const primary = styles[0];
+  const primary = styles[0] || {style: '?', score: 0};   // guard: model returned no styles
   const total = styles.reduce((a,s) => a + s.score, 0) || 1;
   const pcol = colorFor(primary.style);
   row.querySelector('.title').textContent = data.title;
@@ -1091,6 +1091,18 @@ document.getElementById('sib-btn').addEventListener('click', () => {
 });
 document.getElementById('sib-close').addEventListener('click', () => sibPanel.classList.remove('open'));
 
+// chip removals via delegation -- bound ONCE. renderSibEditor() rebuilds sibBody's
+// contents but not sibBody itself, so this delegated handler survives re-renders
+// (binding it inside renderSibEditor stacked a new listener on every render).
+sibBody.addEventListener('click', e => {
+  const btn = e.target.closest('.sib-chip button');
+  if (!btn) return;
+  const canon = btn.dataset.canon, mem = btn.dataset.mem;
+  if (!SIBLING_GROUPS[canon]) return;
+  SIBLING_GROUPS[canon] = SIBLING_GROUPS[canon].filter(m => m !== mem);
+  rebuildSibMap(); renderSibEditor();
+});
+
 function rebuildSibMap(){
   // rebuild SIBLING_MAP from SIBLING_GROUPS after any edit
   for (const k in SIBLING_MAP) delete SIBLING_MAP[k];
@@ -1140,15 +1152,7 @@ function renderSibEditor(){
     `<p class="sib-note">Click ✕ to remove a genre from a group.<br>
     A genre can only be in one group. The canonical name (bold) is what the waveform shows.<br>
     Changes apply immediately to all tracks using sibling or hyst+sibling mode.</p>`);
-  // handle chip removals via delegation
-  sibBody.addEventListener('click', e => {
-    const btn = e.target.closest('.sib-chip button');
-    if (!btn) return;
-    const canon = btn.dataset.canon, mem = btn.dataset.mem;
-    if (!SIBLING_GROUPS[canon]) return;
-    SIBLING_GROUPS[canon] = SIBLING_GROUPS[canon].filter(m => m !== mem);
-    rebuildSibMap(); renderSibEditor();
-  }, {once: true});
+  // (chip-removal handler is bound once near the panel setup, not here)
 }
 
 

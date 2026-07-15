@@ -6,7 +6,7 @@ Project layout:
     genre_gui.py          ← this file: all Python/Flask logic
     templates/index.html  ← HTML shell (references CSS + JS below)
     static/app.css        ← all styling
-    static/app.js         ← all frontend logic (~975 lines)
+    static/app.js         ← all frontend logic (lenses, rows, canvas, vibes/tags)
 
 Run:
     python genre_gui.py          (real Essentia analysis)
@@ -16,8 +16,10 @@ Run:
 Key architecture:
     /analyze    POST  single file upload → full analysis JSON
     /refine     POST  single file upload → dense segment stream (fine detail)
+    /compare    POST  file/filepath → EffNet vs MAEST scores (on-demand ensemble)
     /batch      POST  {path, workers}    → NDJSON stream of results
     /save_training POST genre + file/filepath → copies to ~/genre_training/<genre>/
+    /audio/<h>  GET   stream a DB-recorded track by hash (preview player)
 
 Analysis pipeline (per track):
     1. Decode to 16 kHz mono  → EffNet embedder → 1280-dim embeddings
@@ -178,6 +180,8 @@ def vibe_centroid(vibe_id: int):
         return None
     return acc / wsum
 _engine = {}                      # lazily-built: labels, embedder, classifier
+_engine_lock = threading.Lock()   # guards the one-time model build/download so
+                                  # /batch's first 3 workers don't race on it
 
 
 def ensure_models():
@@ -190,21 +194,29 @@ def ensure_models():
 
 
 def get_engine():
-    """Build (once) and return labels + models."""
+    """Build (once) and return labels + models. Guarded by _engine_lock so the
+    first /batch run (3 workers hitting an unbuilt engine at once) can't race on
+    the model download or construct duplicate TF instances."""
     if _engine:
         return _engine
-    ensure_models()
-    with open(MODEL_DIR / "genre_discogs400-discogs-effnet-1.json") as fh:
-        _engine["labels"] = json.load(fh)["classes"]
-    from essentia.standard import TensorflowPredictEffnetDiscogs, TensorflowPredict2D
-    _engine["embedder"] = TensorflowPredictEffnetDiscogs(
-        graphFilename=str(MODEL_DIR / "discogs-effnet-bs64-1.pb"),
-        output="PartitionedCall:1")
-    _engine["classifier"] = TensorflowPredict2D(
-        graphFilename=str(MODEL_DIR / "genre_discogs400-discogs-effnet-1.pb"),
-        input="serving_default_model_Placeholder",
-        output="PartitionedCall:0")
-    return _engine
+    with _engine_lock:
+        if _engine:                       # another thread built it while we waited
+            return _engine
+        ensure_models()
+        from essentia.standard import TensorflowPredictEffnetDiscogs, TensorflowPredict2D
+        with open(MODEL_DIR / "genre_discogs400-discogs-effnet-1.json") as fh:
+            labels = json.load(fh)["classes"]
+        embedder = TensorflowPredictEffnetDiscogs(
+            graphFilename=str(MODEL_DIR / "discogs-effnet-bs64-1.pb"),
+            output="PartitionedCall:1")
+        classifier = TensorflowPredict2D(
+            graphFilename=str(MODEL_DIR / "genre_discogs400-discogs-effnet-1.pb"),
+            input="serving_default_model_Placeholder",
+            output="PartitionedCall:0")
+        # publish all three keys at once so the lock-free fast path above never
+        # observes a half-built _engine
+        _engine.update({"labels": labels, "embedder": embedder, "classifier": classifier})
+        return _engine
 
 
 # --- optional MAEST engine (2nd genre model, for ensembling) ----------------
@@ -220,15 +232,18 @@ def get_maest():
     file isn't present, so the ensemble feature stays optional."""
     if "maest" in _engine:
         return _engine["maest"]
-    if not MAEST_PB.exists():
-        _engine["maest"] = None
-        return None
-    from essentia.standard import TensorflowPredictMAEST
-    _engine["maest"] = TensorflowPredictMAEST(
-        graphFilename=str(MAEST_PB),
-        input="serving_default_melspectrogram",     # this graph's actual input node
-        output="StatefulPartitionedCall:0")         # discogs-400 predictions, direct
-    return _engine["maest"]
+    with _engine_lock:
+        if "maest" in _engine:            # built while we waited on the lock
+            return _engine["maest"]
+        if not MAEST_PB.exists():
+            _engine["maest"] = None
+            return None
+        from essentia.standard import TensorflowPredictMAEST
+        _engine["maest"] = TensorflowPredictMAEST(
+            graphFilename=str(MAEST_PB),
+            input="serving_default_melspectrogram",     # this graph's actual input node
+            output="StatefulPartitionedCall:0")         # discogs-400 predictions, direct
+        return _engine["maest"]
 
 
 def maest_genre(audio16):
@@ -250,22 +265,27 @@ _custom = {"checked": False, "head": None}
 
 
 def get_custom_head():
-    """Load ~/essentia_models/custom_head.npz once, if it exists."""
-    if not _custom["checked"]:
-        _custom["checked"] = True
+    """Load ~/essentia_models/custom_head.npz once, if it exists. Guarded so the
+    concurrent /batch workers that call this (via custom_predict) load it once."""
+    if _custom["checked"]:
+        return _custom["head"]
+    with _engine_lock:
+        if _custom["checked"]:            # loaded while we waited on the lock
+            return _custom["head"]
         if CUSTOM_HEAD_PATH.exists():
             try:
                 import numpy as np
                 d = np.load(CUSTOM_HEAD_PATH, allow_pickle=False)
-                _custom["head"] = {k: d[k] for k in
-                                   ("W1", "b1", "W2", "b2", "mu", "sigma")}
-                _custom["head"]["labels"] = [str(x) for x in d["labels"]]
+                head = {k: d[k] for k in ("W1", "b1", "W2", "b2", "mu", "sigma")}
+                head["labels"] = [str(x) for x in d["labels"]]
                 acc = float(d["val_acc"]) if "val_acc" in d else None
-                print(f"custom head loaded: {_custom['head']['labels']}"
+                _custom["head"] = head    # publish only once fully built
+                print(f"custom head loaded: {head['labels']}"
                       + (f"  (val acc {acc:.0%})" if acc else ""))
             except Exception as exc:
                 print(f"could not load custom head: {exc}")
-    return _custom["head"]
+        _custom["checked"] = True         # set last: don't try again either way
+        return _custom["head"]
 
 
 def custom_predict(embeddings):
@@ -546,11 +566,14 @@ FINE_HOP_SECONDS = round(FINE_HOP * 256 / 16000, 2)   # 256-sample mel hop @ 16 
 
 def get_fine_embedder():
     eng = get_engine()
-    if "embedder_fine" not in eng:
-        from essentia.standard import TensorflowPredictEffnetDiscogs
-        eng["embedder_fine"] = TensorflowPredictEffnetDiscogs(
-            graphFilename=str(MODEL_DIR / "discogs-effnet-bs64-1.pb"),
-            output="PartitionedCall:1", patchHopSize=FINE_HOP)
+    if "embedder_fine" in eng:
+        return eng["embedder_fine"]
+    with _engine_lock:
+        if "embedder_fine" not in eng:
+            from essentia.standard import TensorflowPredictEffnetDiscogs
+            eng["embedder_fine"] = TensorflowPredictEffnetDiscogs(
+                graphFilename=str(MODEL_DIR / "discogs-effnet-bs64-1.pb"),
+                output="PartitionedCall:1", patchHopSize=FINE_HOP)
     return eng["embedder_fine"]
 
 
@@ -711,9 +734,14 @@ def compare_engines(path: Path, weight=0.5):
     from essentia.standard import MonoLoader
     eng = get_engine()
     labels = eng["labels"]
+    # decode + one-time model builds stay OUTSIDE the inference lock (matching
+    # analyze); only the shared, non-thread-safe TF inference is serialized, so a
+    # /compare during a batch no longer freezes the workers for the whole decode.
     audio16 = MonoLoader(filename=str(path), sampleRate=16000, resampleQuality=4)()
-    eff = np.mean(eng["classifier"](eng["embedder"](audio16)), axis=0)
-    mae = maest_genre(audio16)
+    get_maest()                     # warm MAEST (if installed) before taking the lock
+    with _lock:
+        eff = np.mean(eng["classifier"](eng["embedder"](audio16)), axis=0)
+        mae = maest_genre(audio16)
     if mae is None:
         return {"maest_available": False, "effnet": _top_styles(eff, labels)}
     # union of each engine's top-K, wide enough that the merged top-5 for ANY
@@ -748,12 +776,10 @@ def compare_route():
             p = Path(filepath)
             if not p.is_file():
                 return jsonify({"error": f"file not found: {filepath}"}), 404
-            with _lock:
-                return jsonify(compare_engines(p))
+            return jsonify(compare_engines(p))   # locks only its own inference pass
         with saved_upload(request.files.get("file"),
                           "no file or filepath provided") as p:
-            with _lock:
-                return jsonify(compare_engines(p))
+            return jsonify(compare_engines(p))   # locks only its own inference pass
     except UploadError as e:
         return jsonify({"error": str(e)}), e.status
     except Exception as exc:
@@ -785,9 +811,10 @@ def save_training_route():
         if not src.is_file():
             return jsonify({"error": f"file not found: {filepath}"}), 404
         dest = dest_dir / src.name
-        if not dest.exists():
+        existed = dest.exists()          # capture BEFORE the copy creates it
+        if not existed:
             shutil.copy2(src, dest)
-        return jsonify({"saved": str(dest), "genre": safe, "new": not dest.exists()})
+        return jsonify({"saved": str(dest), "genre": safe, "new": not existed})
 
     # browser upload (dropped tracks)
     f = request.files.get("file")

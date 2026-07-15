@@ -1,5 +1,8 @@
 # Genre v2
 
+> Codename **Genre v2** (the DB, changelog, and this repo); the UI is branded
+> **Vibedentify**.
+
 A local music-genre analysis web app. Drop an audio file (or point it at a
 folder) and it identifies the genre using Essentia's Discogs-EffNet model across
 400 Discogs styles — plus BPM, musical key (Camelot), and a genre-colored
@@ -101,6 +104,9 @@ row may override either axis independently.
   for several consecutive frames (kills flicker). Default.
 - `sibling` — pool near-synonym scores per frame, then take the winner. Groups
   (House / Trance / Techno / …) are **editable** in the sibling panel.
+- `family` — roll each frame up to a broad PulseRoots family (House / Trance / …)
+  and take the winner. Coarser than sibling-merge; taxonomy lives in
+  `static/genre_families.json`.
 - `hyst+sib` — sibling-merge, then hysteresis over the result.
 
 Downstream of the segmentation lens: `smoothSegments()` does temporal cleanup,
@@ -118,7 +124,14 @@ and the breakdown so the two always agree.
   (`/refine`, 4× overlap at ~4× cost).
 - **Vibes:** user-defined similarity clusters over the 1280-dim mean embeddings.
   New tracks auto-show match %; a vibe's "playlist" scans the whole DB by cosine
-  similarity to the vibe's centroid.
+  similarity to the vibe's centroid. Membership is **Rocchio-weighted** (−1..+1
+  per track, driven by the per-song 👍/👎 and the slider editor).
+- **Audio preview:** play/scrub any analyzed track through its waveform (one
+  shared player; dropped files via blob URL, cached/batch tracks via `/audio`).
+- **Compare engines:** on-demand A/B of the EffNet CNN against the MAEST
+  transformer with a live blend slider (needs the optional MAEST model).
+- **Family roll-up:** every track's headline genre is tagged with its broad
+  PulseRoots family (◇); also selectable as the `family` segmentation lens.
 - **Tags:** manual toggleable designations ("high energy", "opener") per track.
 - **Manual override:** set the genre yourself; the track is copied to
   `~/genre_training/<genre>/` to feed the custom-head training pipeline.
@@ -135,10 +148,12 @@ and the breakdown so the two always agree.
 | `/` | GET | UI shell |
 | `/analyze` | POST | single file upload → full analysis JSON (cache-first) |
 | `/refine` | POST | single file → dense segment stream (~0.5 s hop) |
+| `/compare` | POST | file **or** `{filepath}` → EffNet vs MAEST per-style scores for live re-mixing (on-demand; never cached) |
 | `/batch` | POST | `{path, workers}` → NDJSON stream of results |
 | `/save_training` | POST | copy a track to `~/genre_training/<genre>/` |
+| `/audio/<h>` | GET | stream a DB-recorded track by content hash (HTTP Range) for the preview player |
 | `/tags`, `/tags/toggle`, `/tags/for/<h>` | GET/POST | manual tags |
-| `/vibes`, `/vibes/add`, `/vibes/match/<h>`, `/vibes/<id>/playlist` | GET/POST | similarity clusters |
+| `/vibes`, `/vibes/add`, `/vibes/weight`, `/vibes/remove`, `/vibes/<id>/members`, `/vibes/match/<h>`, `/vibes/<id>/playlist` | GET/POST | similarity clusters (Rocchio-weighted membership) |
 
 ---
 

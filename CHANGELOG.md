@@ -68,6 +68,29 @@ _Work in progress lands here, then gets stamped with a version + date on release
   silver body, the authentic classic-Winamp look. Gold + green identity preserved.
 
 ### Fixed
+- **Model-build race on the first `/batch` run.** The earlier fix locked the
+  *inference* pass but not the lazy *build*: `get_engine()` (and `get_maest()`,
+  `get_custom_head()`, `get_fine_embedder()`) were unguarded, so the first few
+  batch workers could hit an unbuilt engine at once — racing on the model
+  download (two `urlretrieve`s to the same path can truncate a `.pb`) and
+  constructing duplicate TF instances. All four now build under a dedicated
+  `_engine_lock` (double-checked, with atomic publish), so concurrent callers
+  wait for the single build instead of racing it.
+- **`/compare` froze batch workers for the whole decode.** `/compare` held the
+  inference lock around the entire `compare_engines()` call, including the
+  `MonoLoader` decode — so an on-demand compare during a batch blocked all
+  workers for the full ~15 s. Decode and the one-time MAEST build now happen
+  outside the lock (matching `analyze()`); only the two inference passes are
+  serialized.
+- **`/save_training` always reported `"new": false`** for server-side (batch)
+  saves — it evaluated `dest.exists()` *after* the copy created the file. Now
+  captured before the copy.
+- **Sibling-editor removal handler stacked listeners.** The delegated chip-remove
+  click handler was re-bound (with `{once:true}`) on every `renderSibEditor()`
+  and every panel open, accumulating stale handlers. Bound once at panel setup;
+  it survives re-renders because it lives on the container, not its contents.
+- Guarded `finishRow` against an empty `styles` array (`styles[0]` → a
+  placeholder) so a style-less analysis can't throw and break the row.
 - **`/batch` race on the shared TF models.** `/batch` drove the shared, non-thread-safe
   `embedder`/`classifier` instances from a 3-worker pool with no lock, while Essentia
   releases the GIL during compute — so concurrent workers overlapped in the model,
