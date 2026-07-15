@@ -1,19 +1,20 @@
 """Essentia model plumbing (EffNet / MAEST / custom head) and the per-track
 analysis pipeline: genre styles, BPM, key, and the waveform envelope.
 """
+
 import json
 import os
 import threading
 import urllib.request
 from pathlib import Path
 
-from .config import MODEL_DIR, MODELS, FAKE, log
+from .config import FAKE, MODEL_DIR, MODELS, log
 
 _lock = threading.Lock()  # TF models are shared + not thread-safe; hold during inference only
 
-_engine = {}                      # lazily-built: labels, embedder, classifier
-_engine_lock = threading.Lock()   # guards the one-time model build/download so
-                                  # /batch's first 3 workers don't race on it
+_engine = {}  # lazily-built: labels, embedder, classifier
+_engine_lock = threading.Lock()  # guards the one-time model build/download so
+# /batch's first 3 workers don't race on it
 
 
 def ensure_models():
@@ -32,19 +33,21 @@ def get_engine():
     if _engine:
         return _engine
     with _engine_lock:
-        if _engine:                       # another thread built it while we waited
+        if _engine:  # another thread built it while we waited
             return _engine
         ensure_models()
-        from essentia.standard import TensorflowPredictEffnetDiscogs, TensorflowPredict2D
+        from essentia.standard import TensorflowPredict2D, TensorflowPredictEffnetDiscogs
+
         with open(MODEL_DIR / "genre_discogs400-discogs-effnet-1.json") as fh:
             labels = json.load(fh)["classes"]
         embedder = TensorflowPredictEffnetDiscogs(
-            graphFilename=str(MODEL_DIR / "discogs-effnet-bs64-1.pb"),
-            output="PartitionedCall:1")
+            graphFilename=str(MODEL_DIR / "discogs-effnet-bs64-1.pb"), output="PartitionedCall:1"
+        )
         classifier = TensorflowPredict2D(
             graphFilename=str(MODEL_DIR / "genre_discogs400-discogs-effnet-1.pb"),
             input="serving_default_model_Placeholder",
-            output="PartitionedCall:0")
+            output="PartitionedCall:0",
+        )
         # publish all three keys at once so the lock-free fast path above never
         # observes a half-built _engine
         _engine.update({"labels": labels, "embedder": embedder, "classifier": classifier})
@@ -65,16 +68,18 @@ def get_maest():
     if "maest" in _engine:
         return _engine["maest"]
     with _engine_lock:
-        if "maest" in _engine:            # built while we waited on the lock
+        if "maest" in _engine:  # built while we waited on the lock
             return _engine["maest"]
         if not MAEST_PB.exists():
             _engine["maest"] = None
             return None
         from essentia.standard import TensorflowPredictMAEST
+
         _engine["maest"] = TensorflowPredictMAEST(
             graphFilename=str(MAEST_PB),
-            input="serving_default_melspectrogram",     # this graph's actual input node
-            output="StatefulPartitionedCall:0")         # discogs-400 predictions, direct
+            input="serving_default_melspectrogram",  # this graph's actual input node
+            output="StatefulPartitionedCall:0",
+        )  # discogs-400 predictions, direct
         return _engine["maest"]
 
 
@@ -83,16 +88,16 @@ def maest_genre(audio16):
     aligned to the same Discogs-400 label order as the EffNet head. None if the
     MAEST model isn't installed."""
     import numpy as np
+
     m = get_maest()
     if m is None:
         return None
-    preds = np.asarray(m(audio16))              # shape (patches, 1, 1, 400)
+    preds = np.asarray(m(audio16))  # shape (patches, 1, 1, 400)
     return preds.reshape(-1, preds.shape[-1]).mean(axis=0)
 
 
 # --- optional custom head (trained with train_head.py) ----------------------
-CUSTOM_HEAD_PATH = Path(os.environ.get("CUSTOM_HEAD",
-                                       MODEL_DIR / "custom_head.npz"))
+CUSTOM_HEAD_PATH = Path(os.environ.get("CUSTOM_HEAD", MODEL_DIR / "custom_head.npz"))
 _custom = {"checked": False, "head": None}
 
 
@@ -102,27 +107,32 @@ def get_custom_head():
     if _custom["checked"]:
         return _custom["head"]
     with _engine_lock:
-        if _custom["checked"]:            # loaded while we waited on the lock
+        if _custom["checked"]:  # loaded while we waited on the lock
             return _custom["head"]
         if CUSTOM_HEAD_PATH.exists():
             try:
                 import numpy as np
+
                 d = np.load(CUSTOM_HEAD_PATH, allow_pickle=False)
                 head = {k: d[k] for k in ("W1", "b1", "W2", "b2", "mu", "sigma")}
                 head["labels"] = [str(x) for x in d["labels"]]
                 acc = float(d["val_acc"]) if "val_acc" in d else None
-                _custom["head"] = head    # publish only once fully built
-                log.info("custom head loaded: %s%s", head["labels"],
-                         f"  (val acc {acc:.0%})" if acc else "")
+                _custom["head"] = head  # publish only once fully built
+                log.info(
+                    "custom head loaded: %s%s",
+                    head["labels"],
+                    f"  (val acc {acc:.0%})" if acc else "",
+                )
             except Exception:
                 log.warning("could not load custom head", exc_info=True)
-        _custom["checked"] = True         # set last: don't try again either way
+        _custom["checked"] = True  # set last: don't try again either way
         return _custom["head"]
 
 
 def custom_predict(embeddings):
     """Forward pass of the trained NumPy head; track-level probabilities."""
     import numpy as np
+
     head = get_custom_head()
     if head is None:
         return None
@@ -130,16 +140,16 @@ def custom_predict(embeddings):
     h = np.maximum(X @ head["W1"] + head["b1"], 0.0)
     logits = h @ head["W2"] + head["b2"]
     e = np.exp(logits - logits.max(axis=1, keepdims=True))
-    probs = (e / e.sum(axis=1, keepdims=True)).mean(axis=0)   # avg over frames
+    probs = (e / e.sum(axis=1, keepdims=True)).mean(axis=0)  # avg over frames
     order = np.argsort(probs)[::-1]
-    return [{"style": head["labels"][int(i)], "score": round(float(probs[i]), 4)}
-            for i in order]
+    return [{"style": head["labels"][int(i)], "score": round(float(probs[i]), 4)} for i in order]
 
 
 def read_title(path: Path) -> str | None:
     """Title from the file's tags via mutagen, or None."""
     try:
         from mutagen import File as MFile
+
         mf = MFile(str(path), easy=True)
         if mf and mf.tags:
             vals = mf.tags.get("title")
@@ -157,11 +167,22 @@ def read_tags(path: Path) -> dict:
     tag, tech = {}, {}
     try:
         from mutagen import File as MFile
+
         mf = MFile(str(path), easy=True)
         if mf:
             if mf.tags:
-                for k in ("title", "artist", "album", "albumartist", "genre",
-                          "date", "tracknumber", "discnumber", "composer", "bpm"):
+                for k in (
+                    "title",
+                    "artist",
+                    "album",
+                    "albumartist",
+                    "genre",
+                    "date",
+                    "tracknumber",
+                    "discnumber",
+                    "composer",
+                    "bpm",
+                ):
                     vals = mf.tags.get(k)
                     if vals and str(vals[0]).strip():
                         tag[k] = str(vals[0]).strip()
@@ -183,18 +204,40 @@ def read_tags(path: Path) -> dict:
 
 
 CAMELOT = {  # (key, scale) -> Camelot wheel position; enharmonics included
-    ("C", "major"): "8B",  ("G", "major"): "9B",  ("D", "major"): "10B",
-    ("A", "major"): "11B", ("E", "major"): "12B", ("B", "major"): "1B",
-    ("F#", "major"): "2B", ("Gb", "major"): "2B", ("C#", "major"): "3B",
-    ("Db", "major"): "3B", ("G#", "major"): "4B", ("Ab", "major"): "4B",
-    ("D#", "major"): "5B", ("Eb", "major"): "5B", ("A#", "major"): "6B",
-    ("Bb", "major"): "6B", ("F", "major"): "7B",
-    ("A", "minor"): "8A",  ("E", "minor"): "9A",  ("B", "minor"): "10A",
-    ("F#", "minor"): "11A", ("Gb", "minor"): "11A", ("C#", "minor"): "12A",
-    ("Db", "minor"): "12A", ("G#", "minor"): "1A", ("Ab", "minor"): "1A",
-    ("D#", "minor"): "2A", ("Eb", "minor"): "2A", ("A#", "minor"): "3A",
-    ("Bb", "minor"): "3A", ("F", "minor"): "4A",  ("C", "minor"): "5A",
-    ("G", "minor"): "6A",  ("D", "minor"): "7A",
+    ("C", "major"): "8B",
+    ("G", "major"): "9B",
+    ("D", "major"): "10B",
+    ("A", "major"): "11B",
+    ("E", "major"): "12B",
+    ("B", "major"): "1B",
+    ("F#", "major"): "2B",
+    ("Gb", "major"): "2B",
+    ("C#", "major"): "3B",
+    ("Db", "major"): "3B",
+    ("G#", "major"): "4B",
+    ("Ab", "major"): "4B",
+    ("D#", "major"): "5B",
+    ("Eb", "major"): "5B",
+    ("A#", "major"): "6B",
+    ("Bb", "major"): "6B",
+    ("F", "major"): "7B",
+    ("A", "minor"): "8A",
+    ("E", "minor"): "9A",
+    ("B", "minor"): "10A",
+    ("F#", "minor"): "11A",
+    ("Gb", "minor"): "11A",
+    ("C#", "minor"): "12A",
+    ("Db", "minor"): "12A",
+    ("G#", "minor"): "1A",
+    ("Ab", "minor"): "1A",
+    ("D#", "minor"): "2A",
+    ("Eb", "minor"): "2A",
+    ("A#", "minor"): "3A",
+    ("Bb", "minor"): "3A",
+    ("F", "minor"): "4A",
+    ("C", "minor"): "5A",
+    ("G", "minor"): "6A",
+    ("D", "minor"): "7A",
 }
 
 WAVE_BINS = 240
@@ -203,12 +246,14 @@ WAVE_BINS = 240
 def waveform_peaks(audio, bins=WAVE_BINS):
     """Downsample |audio| into `bins` peak values in 0..1 for drawing."""
     import numpy as np
+
     a = np.abs(np.asarray(audio))
     if a.size == 0:
         return [0.0] * bins
     edges = np.linspace(0, a.size, bins + 1, dtype=int)
-    peaks = np.array([a[edges[i]:edges[i + 1]].max() if edges[i + 1] > edges[i] else 0.0
-                      for i in range(bins)])
+    peaks = np.array(
+        [a[edges[i] : edges[i + 1]].max() if edges[i + 1] > edges[i] else 0.0 for i in range(bins)]
+    )
     top = peaks.max()
     if top > 0:
         peaks = peaks / top
@@ -219,6 +264,7 @@ def frame_topk(preds, labels, k=6):
     """Per-frame top-k predictions as [style, score] pairs -- the data the
     hysteresis and sibling-merge lenses need (winner plus near-misses)."""
     import numpy as np
+
     preds = np.asarray(preds)
     if preds.ndim != 2 or preds.shape[0] == 0:
         return []
@@ -242,6 +288,7 @@ def salience_read(preds, audio16, labels, topk=8):
     remainder is the incidental tail, shown as "Other" in the UI).
     """
     import numpy as np
+
     preds = np.asarray(preds)
     n = preds.shape[0]
     if n == 0:
@@ -250,9 +297,14 @@ def salience_read(preds, audio16, labels, topk=8):
 
     # per-frame RMS energy, aligned to the n genre frames, normalized to 0..1
     edges = np.linspace(0, len(a), n + 1, dtype=int)
-    energy = np.array([
-        float(np.sqrt(np.mean(a[edges[i]:edges[i + 1]] ** 2))) if edges[i + 1] > edges[i] else 0.0
-        for i in range(n)])
+    energy = np.array(
+        [
+            float(np.sqrt(np.mean(a[edges[i] : edges[i + 1]] ** 2)))
+            if edges[i + 1] > edges[i]
+            else 0.0
+            for i in range(n)
+        ]
+    )
     if energy.max() > 0:
         energy = energy / energy.max()
 
@@ -282,21 +334,36 @@ def salience_read(preds, audio16, labels, topk=8):
 def analyze(path: Path) -> dict:
     """Genre styles + BPM, key, duration, and a waveform envelope for one file."""
     if FAKE:
-        import hashlib, random, math
+        import hashlib
+        import math
+        import random
+
         rng = random.Random(hashlib.md5(path.name.encode()).hexdigest())
-        pool = ["Drum n Bass", "Trance", "Dubstep", "Hard Techno", "Hardstyle",
-                "House", "Techno", "Jungle", "Breakcore", "Psy-Trance"]
+        pool = [
+            "Drum n Bass",
+            "Trance",
+            "Dubstep",
+            "Hard Techno",
+            "Hardstyle",
+            "House",
+            "Techno",
+            "Jungle",
+            "Breakcore",
+            "Psy-Trance",
+        ]
         rng.shuffle(pool)
         scores = sorted((rng.uniform(0.04, 0.55) for _ in range(4)), reverse=True)
         key, scale = rng.choice(list(CAMELOT.keys()))
         wave = [round(abs(math.sin(i / 9) * rng.uniform(0.4, 1.0)), 3) for i in range(WAVE_BINS)]
         segments = []
-        seg_styles = [pool[0]] * 3 + pool[1:3]          # mostly primary, some switches
+        seg_styles = [pool[0]] * 3 + pool[1:3]  # mostly primary, some switches
         for _ in range(rng.randint(5, 9)):
             segments += [rng.choice(seg_styles)] * rng.randint(8, 30)
         # fake salience: weight the primary genre up, as energy-weighting would
         from collections import Counter as _C
-        _c = _C(segments); _tot = sum(_c.values())
+
+        _c = _C(segments)
+        _tot = sum(_c.values())
         _sal = sorted(((g, n / _tot) for g, n in _c.items()), key=lambda kv: -kv[1])
         _sal = [(_sal[0][0], min(0.92, _sal[0][1] + 0.15))] + _sal[1:]
         _s = sum(p for _, p in _sal)
@@ -306,27 +373,38 @@ def analyze(path: Path) -> dict:
         for s in segments:
             others = rng.sample([p for p in pool if p != s], 3)
             top = round(rng.uniform(0.26, 0.55), 3)
-            rest = sorted((round(rng.uniform(0.02, max(0.03, top - 0.02)), 3) for _ in range(3)), reverse=True)
+            rest = sorted(
+                (round(rng.uniform(0.02, max(0.03, top - 0.02)), 3) for _ in range(3)), reverse=True
+            )
             frames.append([[s, top]] + [[others[j], rest[j]] for j in range(3)])
         return {
-            "styles": [{"parent": "Electronic", "style": s, "score": v}
-                       for s, v in zip(pool, scores)],
+            "styles": [
+                {"parent": "Electronic", "style": s, "score": v} for s, v in zip(pool, scores)
+            ],
             "segments": segments,
             "salience": salience,
             "frames": frames,
-            "custom": [{"style": s, "score": round(v, 4)} for s, v in
-                       zip(["Riddim", "Tearout", "Liquid DnB", "Other"],
-                           sorted((rng.uniform(0.02, 0.7) for _ in range(4)),
-                                  reverse=True))],
-            "bpm": round(rng.uniform(120, 178), 1), "bpm_confidence": rng.uniform(0.5, 5.0),
-            "key": key, "scale": scale, "camelot": CAMELOT[(key, scale)],
+            "custom": [
+                {"style": s, "score": round(v, 4)}
+                for s, v in zip(
+                    ["Riddim", "Tearout", "Liquid DnB", "Other"],
+                    sorted((rng.uniform(0.02, 0.7) for _ in range(4)), reverse=True),
+                )
+            ],
+            "bpm": round(rng.uniform(120, 178), 1),
+            "bpm_confidence": rng.uniform(0.5, 5.0),
+            "key": key,
+            "scale": scale,
+            "camelot": CAMELOT[(key, scale)],
             "key_strength": rng.uniform(0.5, 0.95),
-            "duration": rng.uniform(150, 420), "waveform": wave,
+            "duration": rng.uniform(150, 420),
+            "waveform": wave,
             "emb_mean": [rng.uniform(-1, 1) for _ in range(1280)],
         }
 
     import numpy as np
-    from essentia.standard import MonoLoader, RhythmExtractor2013, KeyExtractor
+    from essentia.standard import KeyExtractor, MonoLoader, RhythmExtractor2013
+
     eng = get_engine()
 
     # --- genre (model wants 16 kHz) ---
@@ -383,9 +461,14 @@ def analyze(path: Path) -> dict:
         "salience": salience,
         "frames": frames,
         "custom": custom,
-        "bpm": round(bpm, 1) if bpm else None, "bpm_confidence": bpm_conf,
-        "key": key, "scale": scale, "camelot": camelot, "key_strength": key_strength,
-        "duration": duration, "waveform": waveform_peaks(audio44),
+        "bpm": round(bpm, 1) if bpm else None,
+        "bpm_confidence": bpm_conf,
+        "key": key,
+        "scale": scale,
+        "camelot": camelot,
+        "key_strength": key_strength,
+        "duration": duration,
+        "waveform": waveform_peaks(audio44),
         "emb_mean": [float(x) for x in np.mean(embeddings, axis=0)],
     }
 
@@ -393,7 +476,7 @@ def analyze(path: Path) -> dict:
 # default embedder hops 128 mel-frames (~2.0s); a 32-frame hop (~0.5s) gives 4x
 # overlap and thus ~4x finer genre-boundary resolution -- at ~4x the inference cost.
 FINE_HOP = 32
-FINE_HOP_SECONDS = round(FINE_HOP * 256 / 16000, 2)   # 256-sample mel hop @ 16 kHz
+FINE_HOP_SECONDS = round(FINE_HOP * 256 / 16000, 2)  # 256-sample mel hop @ 16 kHz
 
 
 def get_fine_embedder():
@@ -403,9 +486,12 @@ def get_fine_embedder():
     with _engine_lock:
         if "embedder_fine" not in eng:
             from essentia.standard import TensorflowPredictEffnetDiscogs
+
             eng["embedder_fine"] = TensorflowPredictEffnetDiscogs(
                 graphFilename=str(MODEL_DIR / "discogs-effnet-bs64-1.pb"),
-                output="PartitionedCall:1", patchHopSize=FINE_HOP)
+                output="PartitionedCall:1",
+                patchHopSize=FINE_HOP,
+            )
     return eng["embedder_fine"]
 
 
@@ -413,6 +499,7 @@ def refine_segments(path: Path):
     """Re-run one track with overlapping patches -> (dense segments, dense frames)."""
     import numpy as np
     from essentia.standard import MonoLoader
+
     eng = get_engine()
     audio16 = MonoLoader(filename=str(path), sampleRate=16000, resampleQuality=4)()
     # shared, non-thread-safe TF instances -> serialize inference only
@@ -430,18 +517,24 @@ def build_payload(filename, filepath, title, tags, result):
     DB, not sent to the client (1280 floats the frontend doesn't need)."""
     styles = [s for s in result["styles"] if s["score"] >= 0.02][:5] or result["styles"][:1]
     return {
-        "filename": filename, "filepath": filepath, "title": title, "tags": tags,
-        "styles": [{"parent": s["parent"], "style": s["style"],
-                    "score": round(s["score"], 4)} for s in styles],
+        "filename": filename,
+        "filepath": filepath,
+        "title": title,
+        "tags": tags,
+        "styles": [
+            {"parent": s["parent"], "style": s["style"], "score": round(s["score"], 4)}
+            for s in styles
+        ],
         "salience": result.get("salience"),
         "frames": result.get("frames"),
-        "bpm": result.get("bpm"), "bpm_confidence": result.get("bpm_confidence"),
-        "key": result.get("key"), "scale": result.get("scale"),
-        "camelot": result.get("camelot"), "key_strength": result.get("key_strength"),
+        "bpm": result.get("bpm"),
+        "bpm_confidence": result.get("bpm_confidence"),
+        "key": result.get("key"),
+        "scale": result.get("scale"),
+        "camelot": result.get("camelot"),
+        "key_strength": result.get("key_strength"),
         "duration": result.get("duration"),
         "waveform": result.get("waveform"),
         "segments": result.get("segments"),
         "custom": result.get("custom"),
     }
-
-

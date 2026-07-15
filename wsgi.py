@@ -5,6 +5,7 @@
 
 The Flask dev server (``python -m vibedentify``) is fine for local use.
 """
+
 from vibedentify import create_app
 
 app = create_app()

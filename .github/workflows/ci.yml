@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # essentia-tensorflow is intentionally omitted here: it is imported
+        # lazily inside functions and the test suite runs in FAKE_ANALYZER mode,
+        # so the models are never loaded. Installing it (large, niche wheels)
+        # would only slow CI down without exercising any extra code path.
+        run: pip install flask mutagen numpy pytest ruff
+
+      - name: Lint (ruff)
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Test (pytest)
+        run: pytest -q

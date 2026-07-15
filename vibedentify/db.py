@@ -1,4 +1,5 @@
 """SQLite persistence: analysis cache, embeddings, and vibe centroids."""
+
 import hashlib
 import json
 import os
@@ -56,15 +57,18 @@ def cache_get(h: str):
 
 def cache_put(h: str, filename, filepath, title, payload: dict, emb):
     import numpy as np
+
     blob = np.asarray(emb, dtype=np.float32).tobytes() if emb is not None else None
     with _db_lock, closing(db()) as conn, conn as c:
-        c.execute("INSERT OR REPLACE INTO tracks VALUES(?,?,?,?,?,?,?)",
-                  (h, filename, filepath or "", title, json.dumps(payload),
-                   blob, time.time()))
+        c.execute(
+            "INSERT OR REPLACE INTO tracks VALUES(?,?,?,?,?,?,?)",
+            (h, filename, filepath or "", title, json.dumps(payload), blob, time.time()),
+        )
 
 
 def track_embedding(h: str):
     import numpy as np
+
     with _db_lock, closing(db()) as conn, conn as c:
         row = c.execute("SELECT embedding FROM tracks WHERE hash=?", (h,)).fetchone()
     if not row or row[0] is None:
@@ -74,6 +78,7 @@ def track_embedding(h: str):
 
 def cosine(a, b):
     import numpy as np
+
     na, nb = float(np.linalg.norm(a)), float(np.linalg.norm(b))
     if na == 0 or nb == 0:
         return 0.0
@@ -90,11 +95,13 @@ def vibe_centroid(vibe_id: int):
     normalization just keeps magnitudes tame. With all weights = 1 this reduces
     to the old plain mean. Returns None if the vibe has no usable members."""
     import numpy as np
+
     with _db_lock, closing(db()) as conn, conn as c:
         rows = c.execute(
             "SELECT t.embedding, v.weight FROM vibe_tracks v JOIN tracks t "
             "ON t.hash=v.hash WHERE v.vibe_id=? AND t.embedding IS NOT NULL",
-            (vibe_id,)).fetchall()
+            (vibe_id,),
+        ).fetchall()
     acc, wsum = None, 0.0
     for blob, w in rows:
         if not blob:

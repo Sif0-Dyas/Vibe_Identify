@@ -4,6 +4,7 @@ Not exhaustive — these exist to catch the "a refactor silently broke a route"
 class of regression before it reaches the browser. They run in FAKE mode against
 an empty temp DB (see conftest.py).
 """
+
 import io
 import struct
 import wave
@@ -67,3 +68,21 @@ def test_analyze_fake_returns_full_payload(client):
     body = r.get_json()
     for key in ("styles", "bpm", "hash", "waveform"):
         assert key in body, f"missing {key} in analyze payload"
+
+
+def test_refine_fake(client):
+    # exercises the FINE_HOP_SECONDS path (was an unimported-name bug after the split)
+    data = {"file": (io.BytesIO(_tiny_wav_bytes()), "probe.wav")}
+    r = client.post("/refine", data=data, content_type="multipart/form-data")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert "hop_seconds" in body and "segments" in body
+
+
+def test_vibes_create_and_duplicate(client):
+    # exercises the sqlite3.IntegrityError path (was an unimported-name bug)
+    r1 = client.post("/vibes", json={"name": "Test Vibe"})
+    assert r1.status_code == 200
+    assert r1.get_json()["name"] == "Test Vibe"
+    r2 = client.post("/vibes", json={"name": "Test Vibe"})
+    assert r2.status_code == 409

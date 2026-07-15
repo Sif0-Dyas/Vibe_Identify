@@ -5,6 +5,7 @@ throwaway SQLite database, so the suite never touches real models or the
 user's ~/genre_v2.db. Config is read at import time, so we set the env vars
 first and reload the package per test for full isolation.
 """
+
 import os
 import sys
 import tempfile
@@ -19,7 +20,7 @@ def client():
     tmp.close()
     os.environ["GENRE_DB"] = tmp.name
 
-    for name in list(sys.modules):          # force a clean import per test
+    for name in list(sys.modules):  # force a clean import per test
         if name == "vibedentify" or name.startswith("vibedentify."):
             del sys.modules[name]
     import vibedentify

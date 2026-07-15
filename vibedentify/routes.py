@@ -1,20 +1,40 @@
 """All HTTP routes for the app, grouped on a single Blueprint."""
+
 import json
 import os
+import sqlite3
 import tempfile
 from contextlib import closing, contextmanager
 from pathlib import Path
 
-from flask import (Blueprint, Response, jsonify, render_template, request,
-                   send_file)
+from flask import Blueprint, Response, jsonify, render_template, request, send_file
 
+from .analysis import (
+    FINE_HOP_SECONDS,
+    _lock,
+    analyze,
+    build_payload,
+    get_engine,
+    get_maest,
+    maest_genre,
+    read_tags,
+    read_title,
+    refine_segments,
+)
 from .config import AUDIO_EXTS, FAKE, log
-from .db import (db, _db_lock, file_hash, cache_get, cache_put,
-                 track_embedding, cosine, vibe_centroid)
-from .analysis import (read_title, read_tags, analyze, build_payload,
-                       refine_segments, get_engine, get_maest, maest_genre)
+from .db import (
+    _db_lock,
+    cache_get,
+    cache_put,
+    cosine,
+    db,
+    file_hash,
+    track_embedding,
+    vibe_centroid,
+)
 
 bp = Blueprint("main", __name__)
+
 
 # ----------------------------------------------------------------------------
 # Upload plumbing shared by /analyze, /refine, /compare: validate the audio
@@ -22,6 +42,7 @@ bp = Blueprint("main", __name__)
 # ----------------------------------------------------------------------------
 class UploadError(Exception):
     """Bad/missing upload -- carries the HTTP status the route should return."""
+
     def __init__(self, message, status):
         super().__init__(message)
         self.status = status
@@ -68,7 +89,7 @@ def analyze_route():
 
             title = read_title(p) or Path(f.filename).stem
             tags = read_tags(p)
-            result = analyze(p)          # analyze() locks its own model inference
+            result = analyze(p)  # analyze() locks its own model inference
             emb = result.pop("emb_mean", None)
             payload = build_payload(f.filename, None, title, tags, result)
             cache_put(h, f.filename, None, title, payload, emb)
@@ -89,10 +110,22 @@ def refine_route():
     try:
         _check_upload(f)
         if FAKE:
-            import hashlib, random
+            import hashlib
+            import random
+
             rng = random.Random(hashlib.md5(("fine" + f.filename).encode()).hexdigest())
-            pool = ["Drum n Bass", "Trance", "Dubstep", "Hard Techno", "Hardstyle",
-                    "House", "Techno", "Jungle", "Breakcore", "Psy-Trance"]
+            pool = [
+                "Drum n Bass",
+                "Trance",
+                "Dubstep",
+                "Hard Techno",
+                "Hardstyle",
+                "House",
+                "Techno",
+                "Jungle",
+                "Breakcore",
+                "Psy-Trance",
+            ]
             rng.shuffle(pool)
             seg_styles = [pool[0]] * 4 + pool[1:3]
             segments = []
@@ -102,13 +135,19 @@ def refine_route():
             for s in segments:
                 others = rng.sample([p for p in pool if p != s], 3)
                 top = round(rng.uniform(0.25, 0.6), 3)
-                rest = sorted((round(rng.uniform(0.02, top - 0.02), 3) for _ in range(3)), reverse=True)
+                rest = sorted(
+                    (round(rng.uniform(0.02, top - 0.02), 3) for _ in range(3)), reverse=True
+                )
                 frames.append([[s, top]] + [[others[j], rest[j]] for j in range(3)])
-            return jsonify({"segments": segments, "frames": frames, "hop_seconds": FINE_HOP_SECONDS})
+            return jsonify(
+                {"segments": segments, "frames": frames, "hop_seconds": FINE_HOP_SECONDS}
+            )
 
         with saved_upload(f) as p:
-            segments, frames = refine_segments(p)   # locks its own inference
-            return jsonify({"segments": segments, "frames": frames, "hop_seconds": FINE_HOP_SECONDS})
+            segments, frames = refine_segments(p)  # locks its own inference
+            return jsonify(
+                {"segments": segments, "frames": frames, "hop_seconds": FINE_HOP_SECONDS}
+            )
     except UploadError as e:
         return jsonify({"error": str(e)}), e.status
     except Exception:
@@ -119,14 +158,14 @@ def refine_route():
 def _top_styles(vec, labels, k=6, thresh=0.02):
     """Top-k [{parent,style,score}] from a 400-dim genre vector."""
     import numpy as np
+
     order = np.argsort(vec)[::-1][:k]
     out = []
     for i in order:
         if float(vec[int(i)]) < thresh:
             break
         parent, child = labels[int(i)].split("---", 1)
-        out.append({"parent": parent, "style": child,
-                    "score": round(float(vec[int(i)]), 4)})
+        out.append({"parent": parent, "style": child, "score": round(float(vec[int(i)]), 4)})
     return out
 
 
@@ -137,13 +176,14 @@ def compare_engines(path: Path, weight=0.5):
     share the identical 400-label order, so the merge is a plain weighted average."""
     import numpy as np
     from essentia.standard import MonoLoader
+
     eng = get_engine()
     labels = eng["labels"]
     # decode + one-time model builds stay OUTSIDE the inference lock (matching
     # analyze); only the shared, non-thread-safe TF inference is serialized, so a
     # /compare during a batch no longer freezes the workers for the whole decode.
     audio16 = MonoLoader(filename=str(path), sampleRate=16000, resampleQuality=4)()
-    get_maest()                     # warm MAEST (if installed) before taking the lock
+    get_maest()  # warm MAEST (if installed) before taking the lock
     with _lock:
         eff = np.mean(eng["classifier"](eng["embedder"](audio16)), axis=0)
         mae = maest_genre(audio16)
@@ -152,12 +192,19 @@ def compare_engines(path: Path, weight=0.5):
     # union of each engine's top-K, wide enough that the merged top-5 for ANY
     # weight is contained in it; carry both scores per style
     K = 15
-    idx = sorted(set(np.argsort(eff)[::-1][:K]) | set(np.argsort(mae)[::-1][:K]),
-                 key=lambda i: -max(float(eff[i]), float(mae[i])))
-    pairs = [{"parent": labels[i].split("---", 1)[0],
-              "style":  labels[i].split("---", 1)[1],
-              "eff": round(float(eff[i]), 4), "mae": round(float(mae[i]), 4)}
-             for i in idx]
+    idx = sorted(
+        set(np.argsort(eff)[::-1][:K]) | set(np.argsort(mae)[::-1][:K]),
+        key=lambda i: -max(float(eff[i]), float(mae[i])),
+    )
+    pairs = [
+        {
+            "parent": labels[i].split("---", 1)[0],
+            "style": labels[i].split("---", 1)[1],
+            "eff": round(float(eff[i]), 4),
+            "mae": round(float(mae[i]), 4),
+        }
+        for i in idx
+    ]
     return {"maest_available": True, "weight": weight, "pairs": pairs}
 
 
@@ -168,11 +215,18 @@ def compare_route():
     Accepts a file upload (dropped tracks) or a server-side filepath (batch)."""
     if FAKE:
         import random
+
         rng = random.Random(42)
         pool = ["Drum n Bass", "Dance-pop", "House", "Deep House", "Techno", "Trance", "Dubstep"]
-        pairs = [{"parent": "Electronic", "style": s,
-                  "eff": round(rng.uniform(0.03, 0.45), 3),
-                  "mae": round(rng.uniform(0.03, 0.45), 3)} for s in pool]
+        pairs = [
+            {
+                "parent": "Electronic",
+                "style": s,
+                "eff": round(rng.uniform(0.03, 0.45), 3),
+                "mae": round(rng.uniform(0.03, 0.45), 3),
+            }
+            for s in pool
+        ]
         return jsonify({"maest_available": True, "weight": 0.5, "pairs": pairs})
 
     filepath = (request.form.get("filepath") or "").strip()
@@ -181,10 +235,9 @@ def compare_route():
             p = Path(filepath)
             if not p.is_file():
                 return jsonify({"error": f"file not found: {filepath}"}), 404
-            return jsonify(compare_engines(p))   # locks only its own inference pass
-        with saved_upload(request.files.get("file"),
-                          "no file or filepath provided") as p:
-            return jsonify(compare_engines(p))   # locks only its own inference pass
+            return jsonify(compare_engines(p))  # locks only its own inference pass
+        with saved_upload(request.files.get("file"), "no file or filepath provided") as p:
+            return jsonify(compare_engines(p))  # locks only its own inference pass
     except UploadError as e:
         return jsonify({"error": str(e)}), e.status
     except Exception:
@@ -198,6 +251,7 @@ def save_training_route():
     Accepts either a file upload (dropped tracks) or a server-side filepath (batch).
     Creates ~/genre_training/<genre>/<filename> if needed."""
     import shutil
+
     genre_raw = request.form.get("genre", "").strip()
     if not genre_raw:
         return jsonify({"error": "genre required"}), 400
@@ -217,7 +271,7 @@ def save_training_route():
         if not src.is_file():
             return jsonify({"error": f"file not found: {filepath}"}), 404
         dest = dest_dir / src.name
-        existed = dest.exists()          # capture BEFORE the copy creates it
+        existed = dest.exists()  # capture BEFORE the copy creates it
         if not existed:
             shutil.copy2(src, dest)
         return jsonify({"saved": str(dest), "genre": safe, "new": not existed})
@@ -236,10 +290,18 @@ def save_training_route():
 # Audio preview: stream a previously-analyzed track for in-app playback
 # ----------------------------------------------------------------------------
 AUDIO_MIME = {
-    ".mp3": "audio/mpeg", ".flac": "audio/flac", ".wav": "audio/wav",
-    ".m4a": "audio/mp4", ".mp4": "audio/mp4", ".aac": "audio/aac",
-    ".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/ogg",
-    ".aif": "audio/aiff", ".aiff": "audio/aiff", ".aifc": "audio/aiff",
+    ".mp3": "audio/mpeg",
+    ".flac": "audio/flac",
+    ".wav": "audio/wav",
+    ".m4a": "audio/mp4",
+    ".mp4": "audio/mp4",
+    ".aac": "audio/aac",
+    ".ogg": "audio/ogg",
+    ".oga": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".aif": "audio/aiff",
+    ".aiff": "audio/aiff",
+    ".aifc": "audio/aiff",
     ".wma": "audio/x-ms-wma",
 }
 
@@ -252,16 +314,16 @@ def audio_route(h):
     Browser-dropped files have no server path -- those play client-side via a
     blob URL instead, so a 404 here is expected for them."""
     with _db_lock, closing(db()) as conn, conn as c:
-        row = c.execute("SELECT filepath, filename FROM tracks WHERE hash=?",
-                        (h,)).fetchone()
+        row = c.execute("SELECT filepath, filename FROM tracks WHERE hash=?", (h,)).fetchone()
     if not row or not row[0]:
         return jsonify({"error": "no server-side file for this track"}), 404
     p = Path(row[0])
     if not p.is_file():
         return jsonify({"error": "file no longer exists on disk"}), 404
     mime = AUDIO_MIME.get(p.suffix.lower(), "application/octet-stream")
-    return send_file(str(p), mimetype=mime, conditional=True,
-                     as_attachment=False, download_name=row[1] or p.name)
+    return send_file(
+        str(p), mimetype=mime, conditional=True, as_attachment=False, download_name=row[1] or p.name
+    )
 
 
 # ----------------------------------------------------------------------------
@@ -273,7 +335,8 @@ def tags_list():
         rows = c.execute(
             "SELECT t.id, t.name, COUNT(tt.hash) FROM tags t "
             "LEFT JOIN track_tags tt ON tt.tag_id = t.id "
-            "GROUP BY t.id ORDER BY t.name").fetchall()
+            "GROUP BY t.id ORDER BY t.name"
+        ).fetchall()
     return jsonify([{"id": r[0], "name": r[1], "count": r[2]} for r in rows])
 
 
@@ -299,8 +362,7 @@ def tags_toggle():
     if not tid or not h:
         return jsonify({"error": "tag_id and hash required"}), 400
     with _db_lock, closing(db()) as conn, conn as c:
-        row = c.execute("SELECT 1 FROM track_tags WHERE tag_id=? AND hash=?",
-                        (tid, h)).fetchone()
+        row = c.execute("SELECT 1 FROM track_tags WHERE tag_id=? AND hash=?", (tid, h)).fetchone()
         if row:
             c.execute("DELETE FROM track_tags WHERE tag_id=? AND hash=?", (tid, h))
             return jsonify({"tagged": False})
@@ -313,7 +375,9 @@ def tags_for(h):
     with _db_lock, closing(db()) as conn, conn as c:
         rows = c.execute(
             "SELECT t.id, t.name FROM track_tags tt JOIN tags t ON t.id=tt.tag_id "
-            "WHERE tt.hash=? ORDER BY t.name", (h,)).fetchall()
+            "WHERE tt.hash=? ORDER BY t.name",
+            (h,),
+        ).fetchall()
     return jsonify([{"id": r[0], "name": r[1]} for r in rows])
 
 
@@ -326,7 +390,8 @@ def vibes_list():
         rows = c.execute(
             "SELECT v.id, v.name, COUNT(t.hash) FROM vibes v "
             "LEFT JOIN vibe_tracks t ON t.vibe_id = v.id "
-            "GROUP BY v.id ORDER BY v.name").fetchall()
+            "GROUP BY v.id ORDER BY v.name"
+        ).fetchall()
     return jsonify([{"id": r[0], "name": r[1], "count": r[2]} for r in rows])
 
 
@@ -348,9 +413,11 @@ def vibes_create():
 def _upsert_vibe_weight(vid, h, weight):
     """Insert or update a track's weight within a vibe (shared by add + weight)."""
     with _db_lock, closing(db()) as conn, conn as c:
-        c.execute("INSERT INTO vibe_tracks(vibe_id, hash, weight) VALUES(?,?,?) "
-                  "ON CONFLICT(vibe_id, hash) DO UPDATE SET weight=excluded.weight",
-                  (vid, h, weight))
+        c.execute(
+            "INSERT INTO vibe_tracks(vibe_id, hash, weight) VALUES(?,?,?) "
+            "ON CONFLICT(vibe_id, hash) DO UPDATE SET weight=excluded.weight",
+            (vid, h, weight),
+        )
 
 
 @bp.post("/vibes/add")
@@ -402,10 +469,20 @@ def vibes_members(vid):
         rows = c.execute(
             "SELECT vt.hash, vt.weight, t.title, t.filename FROM vibe_tracks vt "
             "LEFT JOIN tracks t ON t.hash=vt.hash WHERE vt.vibe_id=? "
-            "ORDER BY vt.weight DESC", (vid,)).fetchall()
-    return jsonify([{"hash": r[0],
-                     "weight": 1.0 if r[1] is None else round(float(r[1]), 3),
-                     "title": r[2], "filename": r[3]} for r in rows])
+            "ORDER BY vt.weight DESC",
+            (vid,),
+        ).fetchall()
+    return jsonify(
+        [
+            {
+                "hash": r[0],
+                "weight": 1.0 if r[1] is None else round(float(r[1]), 3),
+                "title": r[2],
+                "filename": r[3],
+            }
+            for r in rows
+        ]
+    )
 
 
 @bp.get("/vibes/match/<h>")
@@ -434,12 +511,16 @@ def vibes_playlist(vid):
         return jsonify({"error": "vibe has no member tracks yet"}), 404
     threshold = float(request.args.get("threshold", 0.60))
     import numpy as np
+
     with _db_lock, closing(db()) as conn, conn as c:
         rows = c.execute(
             "SELECT hash, title, filename, payload, embedding FROM tracks "
-            "WHERE embedding IS NOT NULL").fetchall()
-        members = {r[0] for r in c.execute(
-            "SELECT hash FROM vibe_tracks WHERE vibe_id=?", (vid,)).fetchall()}
+            "WHERE embedding IS NOT NULL"
+        ).fetchall()
+        members = {
+            r[0]
+            for r in c.execute("SELECT hash FROM vibe_tracks WHERE vibe_id=?", (vid,)).fetchall()
+        }
     out = []
     for h, title, filename, payload, blob in rows:
         emb = np.frombuffer(blob, dtype=np.float32)
@@ -447,10 +528,18 @@ def vibes_playlist(vid):
         if sim < threshold:
             continue
         p = json.loads(payload)
-        out.append({"hash": h, "title": title, "filename": filename,
-                    "sim": round(sim, 4), "member": h in members,
-                    "bpm": p.get("bpm"), "camelot": p.get("camelot"),
-                    "duration": p.get("duration")})
+        out.append(
+            {
+                "hash": h,
+                "title": title,
+                "filename": filename,
+                "sim": round(sim, 4),
+                "member": h in members,
+                "bpm": p.get("bpm"),
+                "camelot": p.get("camelot"),
+                "duration": p.get("duration"),
+            }
+        )
     out.sort(key=lambda x: -x["sim"])
     return jsonify(out)
 
@@ -498,9 +587,9 @@ def _map_node(h, title, filename, payload):
 @bp.get("/map")
 def map_route():
     import numpy as np
+
     with _db_lock, closing(db()) as conn, conn as c:
-        rows = c.execute(
-            "SELECT hash, title, filename, payload, embedding FROM tracks").fetchall()
+        rows = c.execute("SELECT hash, title, filename, payload, embedding FROM tracks").fetchall()
     nodes, embs, emb_idx = [], [], []
     for h, title, filename, payload, blob in rows:
         nodes.append(_map_node(h, title, filename, payload))
@@ -516,7 +605,7 @@ def map_route():
         Mn = M / norm
         sims = Mn @ Mn.T
         np.fill_diagonal(sims, -1.0)
-        K = 2                                    # nearest neighbours per node
+        K = 2  # nearest neighbours per node
         seen = set()
         for a in range(len(emb_idx)):
             for b in np.argsort(-sims[a])[:K]:
@@ -527,9 +616,13 @@ def map_route():
                 if key in seen:
                     continue
                 seen.add(key)
-                edges.append({"a": nodes[emb_idx[a]]["hash"],
-                              "b": nodes[emb_idx[int(b)]]["hash"],
-                              "sim": round(s, 3)})
+                edges.append(
+                    {
+                        "a": nodes[emb_idx[a]]["hash"],
+                        "b": nodes[emb_idx[int(b)]]["hash"],
+                        "sim": round(s, 3),
+                    }
+                )
         # (2) PCA of the embeddings -> a few sonic coordinates per track. The
         #     client picks, per genre region, the 2 components that best spread
         #     THAT region's members, so a big single-genre cluster (e.g. all
@@ -538,10 +631,10 @@ def map_route():
         try:
             _, _, Vt = np.linalg.svd(Mc, full_matrices=False)
             ncomp = int(min(8, Vt.shape[0]))
-            proj = Mc @ Vt[:ncomp].T             # (m, ncomp)
+            proj = Mc @ Vt[:ncomp].T  # (m, ncomp)
             std = proj.std(axis=0, keepdims=True)
             std[std == 0] = 1.0
-            proj = proj / std                    # standardise each component
+            proj = proj / std  # standardise each component
             for k, i in enumerate(emb_idx):
                 nodes[i]["e"] = [round(float(v), 4) for v in proj[k]]
         except np.linalg.LinAlgError:
@@ -553,6 +646,7 @@ def map_route():
 def similar_route(h):
     """Top-k nearest tracks to <h> by embedding cosine (for the map popup)."""
     import numpy as np
+
     k = max(1, min(int(request.args.get("k", 8)), 40))
     target = track_embedding(h)
     if target is None:
@@ -560,18 +654,25 @@ def similar_route(h):
     with _db_lock, closing(db()) as conn, conn as c:
         rows = c.execute(
             "SELECT hash, title, filename, payload, embedding FROM tracks "
-            "WHERE embedding IS NOT NULL AND hash != ?", (h,)).fetchall()
+            "WHERE embedding IS NOT NULL AND hash != ?",
+            (h,),
+        ).fetchall()
     out = []
     for hh, title, filename, payload, blob in rows:
         emb = np.frombuffer(blob, dtype=np.float32)
         p = json.loads(payload)
         style, _ = _dominant_style(p)
-        out.append({"hash": hh,
-                    "title": title or (Path(filename).stem if filename else hh[:8]),
-                    "artist": _artist_of(title, filename),
-                    "style": style,
-                    "bpm": p.get("bpm"), "camelot": p.get("camelot"),
-                    "sim": round(cosine(target, emb), 4)})
+        out.append(
+            {
+                "hash": hh,
+                "title": title or (Path(filename).stem if filename else hh[:8]),
+                "artist": _artist_of(title, filename),
+                "style": style,
+                "bpm": p.get("bpm"),
+                "camelot": p.get("camelot"),
+                "sim": round(cosine(target, emb), 4),
+            }
+        )
     out.sort(key=lambda x: -x["sim"])
     return jsonify(out[:k])
 
@@ -586,16 +687,17 @@ def batch_route():
     """Scan a server-side folder path and analyze all audio files in parallel.
     The client passes a WSL path like /mnt/c/Users/you/Music.
     Returns a stream of newline-delimited JSON results (NDJSON)."""
-    import concurrent.futures, json as _json
+    import concurrent.futures
+    import json as _json
+
     data = request.get_json(silent=True) or {}
     folder = Path(data.get("path", "")).expanduser()
-    workers = int(data.get("workers", 3))   # 3 parallel analyses, safe on most CPUs
+    workers = int(data.get("workers", 3))  # 3 parallel analyses, safe on most CPUs
 
     if not folder.is_dir():
         return jsonify({"error": f"not a directory: {folder}"}), 400
 
-    files = sorted(p for p in folder.rglob("*")
-                   if p.is_file() and p.suffix.lower() in AUDIO_EXTS)
+    files = sorted(p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in AUDIO_EXTS)
     if not files:
         return jsonify({"error": "no audio files found"}), 404
 
@@ -605,11 +707,10 @@ def batch_route():
             cached = cache_get(h)
             if cached:
                 cached = dict(cached)
-                cached.update({"ok": True, "hash": h, "cached": True,
-                               "filepath": str(path)})
+                cached.update({"ok": True, "hash": h, "cached": True, "filepath": str(path)})
                 return cached
             title = read_title(path) or path.stem
-            tags  = read_tags(path)
+            tags = read_tags(path)
             result = analyze(path)
             emb = result.pop("emb_mean", None)
             payload = build_payload(path.name, str(path), title, tags, result)
@@ -618,8 +719,12 @@ def batch_route():
             return payload
         except Exception:
             log.exception("batch analysis failed for %s", path.name)
-            return {"ok": False, "filename": path.name, "filepath": str(path),
-                    "error": "analysis failed"}
+            return {
+                "ok": False,
+                "filename": path.name,
+                "filepath": str(path),
+                "error": "analysis failed",
+            }
 
     def generate():
         yield _json.dumps({"total": len(files)}) + "\n"
