@@ -598,8 +598,13 @@ def vibes_playlist(vid):
 # /map returns every track + nearest-neighbour edges; /similar/<h> powers the
 # popup. Both lean on the same 1280-d embeddings that drive vibes.
 # ---------------------------------------------------------------------------
-def _artist_of(title, filename):
-    """Best-effort artist: our titles follow 'Artist - Title'."""
+def _artist_of(payload, title, filename):
+    """Best-effort artist: prefer the file's `artist` metadata tag (stored under
+    payload['tags']['tag']); otherwise parse it out of an 'Artist - Title' name."""
+    tag = ((payload or {}).get("tags") or {}).get("tag") or {}
+    tagged = (tag.get("artist") or tag.get("albumartist") or "").strip()
+    if tagged:
+        return tagged
     base = (title or "") or (Path(filename).stem if filename else "")
     return base.split(" - ", 1)[0].strip() if " - " in base else ""
 
@@ -624,7 +629,7 @@ def _map_node(h, title, filename, payload):
     return {
         "hash": h,
         "title": title or (Path(filename).stem if filename else h[:8]),
-        "artist": _artist_of(title, filename),
+        "artist": _artist_of(p, title, filename),
         "style": style,
         "score": score,
         "styles": [s.get("style") for s in (p.get("styles") or [])[:3]],
@@ -732,7 +737,7 @@ def similar_route(h):
             {
                 "hash": hh,
                 "title": title or (Path(filename).stem if filename else hh[:8]),
-                "artist": _artist_of(title, filename),
+                "artist": _artist_of(p, title, filename),
                 "style": style,
                 "bpm": p.get("bpm"),
                 "camelot": p.get("camelot"),

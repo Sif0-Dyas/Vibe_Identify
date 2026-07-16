@@ -123,6 +123,21 @@ def test_audit_route_returns_list(client):
     assert isinstance(r.get_json(), list)  # empty on the throwaway DB
 
 
+def test_artist_prefers_metadata_tag():
+    # the map/popup artist used to only parse "Artist - Title" names, leaving most
+    # tracks blank; it now prefers the file's artist metadata tag.
+    from vibedentify.routes import _artist_of
+
+    tagged = {"tags": {"tag": {"artist": "ODESZA"}}}
+    assert _artist_of(tagged, "Say My Name (feat. Zyra)", "x.mp3") == "ODESZA"
+    # no tag -> fall back to 'Artist - Title' parsing
+    assert _artist_of({}, "Crystal Waters - Gypsy Woman", "x.mp3") == "Crystal Waters"
+    # albumartist is the secondary tag
+    assert _artist_of({"tags": {"tag": {"albumartist": "V/A"}}}, "Some Title", "x.mp3") == "V/A"
+    # nothing available -> empty (not a crash)
+    assert _artist_of({}, "Just A Title", "x.mp3") == ""
+
+
 def test_misread_flag_logic():
     # the core rule: a shaky read whose close neighbours agree on a different
     # family gets flagged; a confident read does not.
