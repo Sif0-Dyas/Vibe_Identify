@@ -38,6 +38,18 @@ _Work in progress lands here, then gets stamped with a version + date on release
   artists**, **similar tracks**, and a **🎲 "a match for you"** block that pulls
   up a random one of the track's closest matches (with a re-roll). Colour-coded
   legend, `#map` / `#map=<hash>` / `#galaxy` deep links. No new dependencies.
+- **Misread detection.** New `GET /audit` scans the library for likely-misread
+  genres: a low-confidence read whose closest embedding-neighbours (cosine ≥ 0.80)
+  strongly agree on a *different* family is flagged, and the neighbour-consensus
+  genre is suggested (never auto-applied). Surfaced three ways — an amber ring +
+  popup note on the **Map**, a **⚠ review reads** panel listing every flagged
+  track (with map/omit actions and a `#review` deep link), and a clickable
+  **⚠ sounds like &lt;X&gt;** hint on list rows that prefills the override.
+  `/analyze` also attaches the flag to each new read (`vibedentify/insight.py`;
+  thresholds conf < 0.55, agree ≥ 0.60, sim ≥ 0.80, k=8 → ~5% flag rate).
+- **Omit / forget a track.** New `POST /forget/<hash>` deletes a track's analysis
+  (cache + map + vibe/tag membership; the audio file is untouched). Exposed as
+  **✕ omit** on each list row and **omit from library** in the map popup.
 - `CHANGELOG.md` (this file) and `README.md` project documentation.
 - Packaging & metadata: `requirements.txt`, `requirements-dev.txt`,
   `pyproject.toml`, `.env.example`, and an MIT `LICENSE`.
@@ -51,6 +63,15 @@ _Work in progress lands here, then gets stamped with a version + date on release
   (`__init__.py`). New entry points: `python -m vibedentify` (dev server) and
   `wsgi:app` (production). `templates/` and `static/` moved inside the package.
   No route behaviour changed; the smoke suite verifies parity.
+- **Map: subgenre semantic zoom.** The regions layout now sub-clusters each
+  family by dominant style (Dubstep and Drum n Bass separate visibly inside Bass
+  Music); family labels fade back and cyan subgenre labels fade in as you zoom
+  (level-of-detail). The subgenre-label threshold scales with library size, and
+  the genre labels are brighter/more legible.
+- **List: skip duplicate + already-analyzed drops.** Re-dropping a file already
+  in the list is a no-op (dedup by name+size), and a track already in the DB
+  (cache-hit) is skipped from the list entirely instead of adding a redundant
+  row. A brief "skipped N …" note shows in the footer.
 
 ### Fixed
 - Stop leaking raw exception strings to HTTP clients — log the real error and

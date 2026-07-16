@@ -164,6 +164,13 @@ and the breakdown so the two always agree.
   brightness, search-to-fly, and a popup showing similar artists/tracks plus a
   🎲 random close match. Positions come from a PCA of the embeddings (`/map`),
   nearest-neighbour lines and the popup from cosine similarity (`/similar`).
+  Zoom in and the family labels give way to per-subgenre sub-clusters (semantic
+  zoom / level-of-detail).
+- **Misread detection:** a low-confidence read whose closest sonic neighbours
+  strongly disagree is flagged, with the neighbour-consensus genre suggested
+  (never auto-applied). Surfaced as an amber ring + popup note on the map, a
+  **⚠ review reads** audit panel (`#review`), and a clickable hint on list rows.
+  `GET /audit` scans the whole library (`vibedentify/insight.py`).
 - **Audio preview:** play/scrub any analyzed track through its waveform (one
   shared player; dropped files via blob URL, cached/batch tracks via `/audio`).
 - **Compare engines:** on-demand A/B of the EffNet CNN against the MAEST
@@ -171,8 +178,11 @@ and the breakdown so the two always agree.
 - **Family roll-up:** every track's headline genre is tagged with its broad
   PulseRoots family (◇); also selectable as the `family` segmentation lens.
 - **Tags:** manual toggleable designations ("high energy", "opener") per track.
-- **Manual override:** set the genre yourself; the track is copied to
-  `~/genre_training/<genre>/` to feed the custom-head training pipeline.
+- **Manual override / omit:** relabel a track yourself (it's copied to
+  `~/genre_training/<genre>/` to feed the custom-head training pipeline), or
+  **omit** a bad read entirely — `POST /forget/<hash>` deletes it from the cache
+  and map (the audio file is untouched). Both are on each list row and in the
+  map popup.
 - **Batch folder:** point at a WSL folder path; results stream as NDJSON with 3
   parallel workers, cache-aware.
 - **Export:** dump the current list (genres, BPM, key, duration) to `.txt`.
@@ -187,6 +197,8 @@ and the breakdown so the two always agree.
 | `/analyze` | POST | single file upload → full analysis JSON (cache-first) |
 | `/map` | GET | every cached track (+ PCA coords) + nearest-neighbour edges, for the 3-D map |
 | `/similar/<h>` | GET | tracks nearest to `<h>` by embedding cosine (map popup) |
+| `/audit` | GET | likely-misread reads (low confidence + neighbours disagree) + suggestions |
+| `/forget/<h>` | POST | delete a track's analysis (cache + map + vibe/tag membership) |
 | `/refine` | POST | single file → dense segment stream (~0.5 s hop) |
 | `/compare` | POST | file **or** `{filepath}` → EffNet vs MAEST per-style scores for live re-mixing (on-demand; never cached) |
 | `/batch` | POST | `{path, workers}` → NDJSON stream of results |
