@@ -1647,6 +1647,7 @@ function escapeHtml(s){
   let W = 0, H = 0, DPR = 1;
   const rot = { x: -0.15, y: 0.5 };        // orbit angles
   const view = { zoom: 1, panx: 0, pany: 0 };
+  const pivot = { x:0, y:0, z:0 };     // orbit centre: eases toward the selected track
   let spinSpeed = 0.0022, running = false, rafId = null, filterFam = null;
   let edgesOn = true, harmonic = false, flaggedOnly = false;
   const tipEl = document.getElementById('map-tip');
@@ -1863,6 +1864,11 @@ function escapeHtml(s){
       view.pany = anim.f.py + (anim.t.py-anim.f.py)*e;
       if (p>=1) anim = null;
     }
+    // orbit pivots around the selected track (eased); origin when nothing selected
+    const sel = selHash ? byHash.get(selHash) : null;
+    pivot.x += ((sel?sel.x3:0) - pivot.x) * 0.12;
+    pivot.y += ((sel?sel.y3:0) - pivot.y) * 0.12;
+    pivot.z += ((sel?sel.z3:0) - pivot.z) * 0.12;
     const cy=Math.cos(rot.y), sy=Math.sin(rot.y), cx=Math.cos(rot.x), sx=Math.sin(rot.x);
     const DISP = Math.min(W,H)*0.40*view.zoom;
     const cxp = W/2 + view.panx, cyp = H/2 + view.pany;
@@ -1873,11 +1879,13 @@ function escapeHtml(s){
     for (const n of NODES){
       if (filterFam && n.fam !== filterFam) continue;   // genre filter
       if (flaggedOnly && !n.flag) continue;             // "likely misreads" filter
-      const x =  n.x3*cy + n.z3*sy;
-      const z = -n.x3*sy + n.z3*cy;
-      const y2 = n.y3*cx - z*sx;
-      const z2 = n.y3*sx + z*cx;            // depth: bigger = nearer
+      const ax = n.x3-pivot.x, ay = n.y3-pivot.y, az = n.z3-pivot.z;
+      const x =  ax*cy + az*sy;
+      const z = -ax*sy + az*cy;
+      const y2 = ay*cx - z*sx;
+      const z2 = ay*sx + z*cx;              // depth: bigger = nearer
       const dist = CAM - z2;
+      if (dist < 0.15) continue;            // clipped behind the camera
       const persp = CAM / dist;
       const sxp = cxp + x*persp*DISP;
       const syp = cyp + y2*persp*DISP;
@@ -1913,8 +1921,9 @@ function escapeHtml(s){
     ctx.textAlign='center'; ctx.textBaseline='middle';
     const lod = (mapMode==='galaxy') ? 0 : clamp((view.zoom - 1.5) / (3.0 - 1.5), 0, 1);
     const projPt = c => {
-      const x = c.x*cy + c.z*sy, z = -c.x*sy + c.z*cy;
-      const y2 = c.y*cx - z*sx, z2 = c.y*sx + z*cx;
+      const ax = c.x-pivot.x, ay = c.y-pivot.y, az = c.z-pivot.z;
+      const x = ax*cy + az*sy, z = -ax*sy + az*cy;
+      const y2 = ay*cx - z*sx, z2 = ay*sx + z*cx;
       const persp = CAM/(CAM - z2);
       return { sx: cxp + x*persp*DISP, sy: cyp + y2*persp*DISP, z2, persp };
     };
@@ -1932,6 +1941,7 @@ function escapeHtml(s){
     for (const f of FAMS){
       if (filterFam && f !== filterFam) continue;
       const p = projPt(CENTROIDS[f]);
+      if (p.persp <= 0) continue;
       const depth = clamp((p.z2+1.15)/2.3, 0, 1);
       const a = (0.34 + 0.22*depth) * (1 - 0.66*lod);
       if (a < 0.03) continue;
@@ -1944,6 +1954,7 @@ function escapeHtml(s){
       for (const key in STYLE_CENTROIDS){
         if (filterFam && !key.startsWith(filterFam + '||')) continue;
         const c = STYLE_CENTROIDS[key], p = projPt(c);
+        if (p.persp <= 0) continue;
         const depth = clamp((p.z2+1.15)/2.3, 0, 1);
         const a = (0.42 + 0.28*depth) * lod;
         drawLabel(c.style.toUpperCase(), p,
@@ -2053,13 +2064,11 @@ function escapeHtml(s){
   function selectNode(hash){
     const n = byHash.get(hash); if (!n) return;
     selHash = hash;
-    // fly the node to face the camera; the orbit keeps going afterwards
-    // rotate the cloud so this node faces the camera, offset left of the popup
-    const ry = Math.atan2(-n.x3, n.z3);
-    const rx = Math.atan2(n.y3, Math.hypot(n.x3, n.z3));
+    // the pivot eases to this track (frame loop), so it becomes the orbit centre.
+    // keep the rotation, just zoom in a bit and recentre the view.
     anim = { f:{rx:rot.x,ry:rot.y,z:view.zoom,px:view.panx,py:view.pany},
-             t:{rx, ry, z:Math.max(1.6,view.zoom), px:-W*0.14, py:0},
-             t0:performance.now(), dur:640 };
+             t:{rx:rot.x, ry:rot.y, z:Math.max(1.9,view.zoom), px:0, py:0},
+             t0:performance.now(), dur:600 };
     openPopup(n);
   }
 
