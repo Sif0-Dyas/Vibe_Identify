@@ -67,6 +67,12 @@ _Work in progress lands here, then gets stamped with a version + date on release
   mode against a throwaway DB.
 
 ### Changed
+- **Split `static/app.js` (2.7k lines) into three `<script>`-loaded files.** The
+  3-D Genre Map moved to `static/map.js` and the row audio player to
+  `static/player.js`; `static/app.js` keeps the rest (rows, lenses, vibes, tags,
+  compare, batch) and the shared helpers. No bundler or module conversion — plain
+  ordered `<script>` tags (app.js first, then player.js, then map.js), with the
+  load-order requirement documented atop each file. No behaviour change.
 - **User guide rewritten for end users.** `docs/USAGE.md` (the in-app **Guide**
   tab) is now task- and decision-oriented — it explains *which* analyze method,
   map layout (regions / galaxy / tree), and lens to pick and *why*, and walks
@@ -107,6 +113,11 @@ _Work in progress lands here, then gets stamped with a version + date on release
   row. A brief "skipped N …" note shows in the footer.
 
 ### Fixed
+- **`/map` no longer builds the full pairwise cosine matrix.** It only keeps the
+  top-2 neighbours per node, so the similarity search now runs in row-blocks and
+  pulls each row's top-K (via `argpartition`) instead of allocating the whole
+  N×N float32 matrix (~400 MB at 10k tracks) and argsorting it on every map load;
+  `insight.audit()` got the same treatment. Output is byte-identical to before.
 - Stop leaking raw exception strings to HTTP clients — log the real error and
   return a generic message.
 - Removed a stray `<style>` tag from the top of `static/app.css`.

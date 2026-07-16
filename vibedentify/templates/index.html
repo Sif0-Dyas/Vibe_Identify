@@ -144,6 +144,9 @@
     accept=".mp3,.flac,.m4a,.mp4,.aac,.alac,.ogg,.oga,.opus,.wav,.aif,.aiff,.aifc,.wma,.wv,.ape,.mpc,.dsf,audio/*">
 </footer>
 
+<!-- load order matters: app.js defines shared helpers used by the other two -->
 <script src="/static/app.js"></script>
+<script src="/static/player.js"></script>
+<script src="/static/map.js"></script>
 </body>
 </html>
