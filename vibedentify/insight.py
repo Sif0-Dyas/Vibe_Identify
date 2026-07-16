@@ -127,23 +127,35 @@ def audit():
         embs.append(np.frombuffer(blob, dtype=np.float32))
     M = np.vstack(embs)
     M = M / (np.linalg.norm(M, axis=1, keepdims=True) + 1e-9)
-    S = M @ M.T
-    np.fill_diagonal(S, -1.0)
+    # Compute the cosine matrix in row-blocks and pull each row's top-K
+    # neighbours, instead of materialising the full n*n matrix (which is
+    # ~400 MB at 10k tracks and is rebuilt on every /map load).
+    n = len(hashes)
+    kth = min(K, n) - 1
+    BLOCK = 512
     out = []
-    for i in range(len(hashes)):
-        top_style, top_conf = dominant(payloads[i])
-        nn = np.argsort(-S[i])[:K]
-        neighbours = [(float(S[i, j]), dominant(payloads[int(j)])[0]) for j in nn]
-        res = _score(top_style, top_conf, neighbours)
-        if res and res["flag"]:
-            out.append(
-                {
-                    "hash": hashes[i],
-                    "title": titles[i],
-                    "style": top_style,
-                    "family": family_of(top_style),
-                    **res,
-                }
-            )
+    for i0 in range(0, n, BLOCK):
+        block = M[i0 : i0 + BLOCK] @ M.T  # (rows, n)
+        for r in range(block.shape[0]):
+            i = i0 + r
+            row = block[r]
+            row[i] = -1.0  # exclude self (was np.fill_diagonal)
+            # top-K via argpartition, ordered by descending sim so the flag
+            # decisions match the previous argsort()[:K] behaviour exactly.
+            nn = np.argpartition(-row, kth)[:K]
+            nn = nn[np.argsort(-row[nn])]
+            top_style, top_conf = dominant(payloads[i])
+            neighbours = [(float(row[int(j)]), dominant(payloads[int(j)])[0]) for j in nn]
+            res = _score(top_style, top_conf, neighbours)
+            if res and res["flag"]:
+                out.append(
+                    {
+                        "hash": hashes[i],
+                        "title": titles[i],
+                        "style": top_style,
+                        "family": family_of(top_style),
+                        **res,
+                    }
+                )
     out.sort(key=lambda x: x["confidence"])
     return out

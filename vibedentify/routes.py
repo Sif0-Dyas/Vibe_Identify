@@ -662,32 +662,46 @@ def map_route():
             embs.append(np.frombuffer(blob, dtype=np.float32))
             emb_idx.append(len(nodes) - 1)
     edges = []
-    if len(embs) >= 2:
+    m = len(embs)
+    if m >= 2:
         M = np.vstack(embs).astype(np.float32)
-        # (1) similarity edges from cosine
+        # (1) similarity edges from cosine. Only the top-K neighbours per node
+        #     are kept, so the cosine matrix is computed in row-blocks and each
+        #     row's top-K pulled out, instead of materialising the full m*m
+        #     matrix (~400 MB at 10k tracks, recomputed on every map load).
         norm = np.linalg.norm(M, axis=1, keepdims=True)
         norm[norm == 0] = 1.0
         Mn = M / norm
-        sims = Mn @ Mn.T
-        np.fill_diagonal(sims, -1.0)
         K = 2  # nearest neighbours per node
         seen = set()
-        for a in range(len(emb_idx)):
-            for b in np.argsort(-sims[a])[:K]:
-                s = float(sims[a, b])
-                if s <= 0:
-                    continue
-                key = (min(a, b), max(a, b))
-                if key in seen:
-                    continue
-                seen.add(key)
-                edges.append(
-                    {
-                        "a": nodes[emb_idx[a]]["hash"],
-                        "b": nodes[emb_idx[int(b)]]["hash"],
-                        "sim": round(s, 3),
-                    }
-                )
+        BLOCK = 512
+        kth = min(K, m) - 1
+        for i0 in range(0, m, BLOCK):
+            block = Mn[i0 : i0 + BLOCK] @ Mn.T  # (rows, m)
+            for r in range(block.shape[0]):
+                a = i0 + r
+                row = block[r]
+                row[a] = -1.0  # exclude self (was np.fill_diagonal)
+                # top-K via argpartition, then ordered by descending sim so the
+                # edge list is identical to the previous argsort()[:K] output.
+                cand = np.argpartition(-row, kth)[:K]
+                cand = cand[np.argsort(-row[cand])]
+                for b in cand:
+                    b = int(b)
+                    s = float(row[b])
+                    if s <= 0:
+                        continue
+                    key = (min(a, b), max(a, b))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    edges.append(
+                        {
+                            "a": nodes[emb_idx[a]]["hash"],
+                            "b": nodes[emb_idx[b]]["hash"],
+                            "sim": round(s, 3),
+                        }
+                    )
         # (2) PCA of the embeddings -> a few sonic coordinates per track. The
         #     client picks, per genre region, the 2 components that best spread
         #     THAT region's members, so a big single-genre cluster (e.g. all
