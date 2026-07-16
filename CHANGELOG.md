@@ -69,6 +69,15 @@ _Work in progress lands here, then gets stamped with a version + date on release
   Music); family labels fade back and cyan subgenre labels fade in as you zoom
   (level-of-detail). The subgenre-label threshold scales with library size, and
   the genre labels are brighter/more legible.
+- **Map: label readability pass.** Family labels no longer pile on top of each
+  other — they relax apart in 2-D (box separation) and connect back to their
+  cluster with a colour-coded leader line. In **regions** the families sit
+  further apart (wider Fibonacci sphere) with more room for subgenres, and the
+  view auto-fits to the cloud on entry / reset. In **galaxy** the points stay in
+  their natural similarity positions (untouched); since a tight ball makes each
+  centroid's *direction* meaningless, the labels instead ring the cluster evenly
+  by angle, each tied back by a leader line. Subgenre labels get more space and
+  fade in sooner.
 - **List: skip duplicate + already-analyzed drops.** Re-dropping a file already
   in the list is a no-op (dedup by name+size), and a track already in the DB
   (cache-hit) is skipped from the list entirely instead of adding a redundant

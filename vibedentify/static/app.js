@@ -1643,6 +1643,7 @@ function escapeHtml(s){
   let mapMode = 'regions';                 // 'regions' | 'galaxy' | 'tree'
   let TREE = null;                         // {nodes, links, rows} for tree mode
   let treeHits = [], hoverGenre = null;    // tree node hit-boxes + hovered node
+  let MAXR = 1;                            // cloud bounding radius (for auto-fit)
   let selHash = null;
   let simCache = [];                       // last popup's /similar result
 
@@ -1725,14 +1726,14 @@ function escapeHtml(s){
 
     if (mapMode === 'galaxy'){
       // position == first 3 PCA axes -> a pure 3-D sonic galaxy
+      // natural positions == the first 3 PCA axes; spacing follows the tracks'
+      // own connections, no artificial spreading.
       const p = [0,1,2].map(j => pctl(NODES.map(n=>Math.abs(n.e?n.e[j]:0)),0.96)||1);
-      // gamma-spread the dense centre outward so genres separate more
-      const sp = v => { const a = Math.min(Math.abs(v), 1.15); return Math.sign(v) * Math.pow(a/1.15, 0.7) * 1.4; };
       for (const n of NODES){
         const r = rng(n.hash);
-        n.x3 = sp((n.e?n.e[0]:0)/p[0]) + (r()-0.5)*0.04;
-        n.y3 = sp((n.e?n.e[1]:0)/p[1]) + (r()-0.5)*0.04;
-        n.z3 = sp((n.e?n.e[2]:0)/p[2]) + (r()-0.5)*0.04;
+        n.x3 = clamp((n.e?n.e[0]:0)/p[0], -1.3, 1.3) + (r()-0.5)*0.04;
+        n.y3 = clamp((n.e?n.e[1]:0)/p[1], -1.3, 1.3) + (r()-0.5)*0.04;
+        n.z3 = clamp((n.e?n.e[2]:0)/p[2], -1.3, 1.3) + (r()-0.5)*0.04;
         n.ph = r()*6.28;
       }
     } else {
@@ -1746,9 +1747,9 @@ function escapeHtml(s){
         const k = i + 0.5;
         const phi = Math.acos(1 - 2*k/rest.length);
         const th  = Math.PI * (1 + Math.sqrt(5)) * k;
-        anchors[f] = { x:1.15*Math.cos(th)*Math.sin(phi),
-                       y:1.15*Math.sin(th)*Math.sin(phi),
-                       z:1.15*Math.cos(phi) };
+        anchors[f] = { x:1.7*Math.cos(th)*Math.sin(phi),
+                       y:1.7*Math.sin(th)*Math.sin(phi),
+                       z:1.7*Math.cos(phi) };
       });
       // sub-clusters: within each family, group tracks by dominant style
       // (subgenre) and give each style its own sub-anchor on a small sphere
@@ -1760,7 +1761,7 @@ function escapeHtml(s){
         for (const n of NODES) if (n.fam===f){ const s=n.style||f; cnt[s]=(cnt[s]||0)+1; }
         const styles = Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a]);
         const famSpread = 0.06 + Math.sqrt(COUNTS[f]) * 0.013;
-        const subR = famSpread * (styles.length>1 ? 0.55 : 0);
+        const subR = famSpread * (styles.length>1 ? 1.0 : 0);   // more room for subgenres
         styles.forEach((s,i) => {
           styleCount[`${f}||${s}`] = cnt[s];
           const a = anchors[f];
@@ -1811,6 +1812,8 @@ function escapeHtml(s){
     for (const n of NODES){ const a=acc[n.fam]; a.x+=n.x3; a.y+=n.y3; a.z+=n.z3; a.c++; }
     for (const f of FAMS){ const a=acc[f];
       CENTROIDS[f] = { x:a.x/a.c, y:a.y/a.c, z:a.z/a.c, n:COUNTS[f] }; }
+    MAXR = 0.5;
+    for (const n of NODES){ const d = Math.hypot(n.x3, n.y3, n.z3); if (d > MAXR) MAXR = d; }
 
     // subgenre label anchors (regions only): centroid of each style sub-cluster
     // with >=4 members -- these fade in as you zoom in (semantic zoom / LOD).
@@ -2032,7 +2035,7 @@ function escapeHtml(s){
     // Labels with semantic zoom (LOD): family names when zoomed out, subgenre
     // names fading in as you zoom in. Galaxy mode has no hierarchy -> no fade.
     ctx.textAlign='center'; ctx.textBaseline='middle';
-    const lod = (mapMode==='galaxy') ? 0 : clamp((view.zoom - 1.5) / (3.0 - 1.5), 0, 1);
+    const lod = (mapMode==='galaxy') ? 0 : clamp((view.zoom - 1.2) / (2.4 - 1.2), 0, 1);
     const projPt = c => {
       const ax = c.x-pivot.x, ay = c.y-pivot.y, az = c.z-pivot.z;
       const x = ax*cy + az*sy, z = -ax*sy + az*cy;
@@ -2050,17 +2053,73 @@ function escapeHtml(s){
       ctx.fillStyle = fill;
       ctx.fillText(text, p.sx, p.sy);
     };
-    // family labels -- fade back (but never fully vanish) as we zoom in
+    // family labels: measure, then relax apart in 2D (box separation) so they
+    // fan out around the cluster -- even a tight galaxy ball -- each tied back
+    // to its true centroid by a colour-coded leader line.
+    const fl = [];
+    let cx0 = 0, cy0 = 0;
     for (const f of FAMS){
       if (filterFam && f !== filterFam) continue;
       const p = projPt(CENTROIDS[f]);
       if (p.persp <= 0) continue;
       const depth = clamp((p.z2+1.15)/2.3, 0, 1);
-      const a = (0.34 + 0.22*depth) * (1 - 0.66*lod);
-      if (a < 0.03) continue;
-      drawLabel(f.toUpperCase(), p,
-        `800 ${Math.min(46, 15 + CENTROIDS[f].n*1.1) * p.persp}px Syne, sans-serif`,
-        `rgba(230,236,246,${a})`);
+      const alpha = (0.52 + 0.32*depth) * (1 - 0.55*lod);
+      if (alpha < 0.04) continue;
+      const fs = Math.min(21, 13 + CENTROIDS[f].n*0.3) * clamp(p.persp, 0.9, 1.25);
+      ctx.font = `800 ${fs}px Syne, sans-serif`;
+      fl.push({ f, ax:p.sx, ay:p.sy, lx:p.sx, ly:p.sy,
+                hw:ctx.measureText(f.toUpperCase()).width/2 + 5, hh:fs*0.62, fs, alpha });
+      cx0 += p.sx; cy0 += p.sy;
+    }
+    if (fl.length){
+      cx0 /= fl.length; cy0 /= fl.length;
+      let spread = 0;                                   // how clustered are the anchors?
+      for (const l of fl) spread += Math.hypot(l.lx-cx0, l.ly-cy0);
+      spread /= fl.length;
+      if (spread < 90){
+        // tight ball (galaxy): centroid *direction* is basically noise, so ring
+        // the labels evenly by angle around the cluster (elliptical: wider than
+        // tall to fit long names), each tied back to the ball by a leader line.
+        const arr = fl.slice().sort((a,b) =>
+          Math.atan2(a.ay-cy0, a.ax-cx0) - Math.atan2(b.ay-cy0, b.ax-cx0));
+        const N = arr.length, R = Math.max(150, N*9);
+        for (let i=0; i<N; i++){
+          const ang = (i/N)*6.2832 - 1.5708;            // start at top, go clockwise
+          arr[i].lx = cx0 + Math.cos(ang)*R;
+          arr[i].ly = cy0 + Math.sin(ang)*R*0.72;
+        }
+      } else {
+        // spread map (regions): nudge a hair so labels stay on their centroids.
+        for (const l of fl){
+          let dx = l.lx-cx0, dy = l.ly-cy0, d = Math.hypot(dx, dy);
+          if (d < 1){ const a = (hueOf(l.f) % 360) * Math.PI/180; dx = Math.cos(a); dy = Math.sin(a); d = 1; }
+          l.lx += dx/d * 3; l.ly += dy/d * 3;
+        }
+      }
+    }
+    for (let pass=0; pass<90; pass++){                  // 2D AABB min-penetration relax
+      let moved = false;
+      for (let i=0; i<fl.length; i++) for (let j=i+1; j<fl.length; j++){
+        const a=fl[i], b=fl[j];
+        const dx=b.lx-a.lx, dy=b.ly-a.ly;
+        const ox=(a.hw+b.hw)-Math.abs(dx), oy=(a.hh+b.hh+2)-Math.abs(dy);
+        if (ox>0 && oy>0){                              // boxes overlap -> push on shallow axis
+          if (ox < oy){ const p=(ox/2)*(dx>=0?1:-1); a.lx-=p; b.lx+=p; }
+          else        { const p=(oy/2)*(dy>=0?1:-1); a.ly-=p; b.ly+=p; }
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+    ctx.textAlign = 'center';
+    for (const l of fl){
+      if (Math.hypot(l.lx-l.ax, l.ly-l.ay) > 4){        // pulled away -> leader line
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = `hsla(${hueOf(l.f)} 62% 62% / ${clamp(0.65*l.alpha+0.2, 0, 0.75)})`;
+        ctx.beginPath(); ctx.moveTo(l.ax, l.ay); ctx.lineTo(l.lx, l.ly); ctx.stroke();
+      }
+      drawLabel(l.f.toUpperCase(), {sx:l.lx, sy:l.ly},
+        `800 ${l.fs}px Syne, sans-serif`, `rgba(233,238,247,${l.alpha})`);
     }
     // subgenre labels -- fade in with zoom (tinted + mono, smaller)
     if (lod > 0.01){
@@ -2069,10 +2128,10 @@ function escapeHtml(s){
         const c = STYLE_CENTROIDS[key], p = projPt(c);
         if (p.persp <= 0) continue;
         const depth = clamp((p.z2+1.15)/2.3, 0, 1);
-        const a = (0.42 + 0.28*depth) * lod;
+        const a = (0.5 + 0.3*depth) * lod;
         drawLabel(c.style.toUpperCase(), p,
-          `700 ${Math.min(24, 9 + c.n*0.45) * p.persp}px 'JetBrains Mono', monospace`,
-          `rgba(150,225,255,${a})`);
+          `700 ${Math.min(22, 10 + c.n*0.4) * clamp(p.persp,0.85,1.3)}px 'JetBrains Mono', monospace`,
+          `rgba(155,228,255,${a})`);
       }
     }
 
@@ -2374,7 +2433,8 @@ function escapeHtml(s){
   function resetView(){
     closePopup();
     view.panx=0; view.pany=0; rot.x=-0.15; anim=null;
-    if (mapMode === 'tree') fitTree(); else view.zoom = 1;
+    if (mapMode === 'tree') fitTree();
+    else view.zoom = clamp(0.95 / (MAXR || 1), 0.25, 1.6);   // fit the cloud
   }
   function focusFamily(fam){          // fly to a genre's centroid
     const c = CENTROIDS[fam]; if (!c) return;
@@ -2468,7 +2528,9 @@ function escapeHtml(s){
     document.getElementById('map-view').hidden = !on;
     if (on){
       ensureBuilt().then(() => {
-        resize(); if (mapMode === 'tree') fitTree(); startLoop();
+        resize();
+        if (mapMode === 'tree') fitTree(); else view.zoom = clamp(0.95/(MAXR||1), 0.25, 1.6);
+        startLoop();
         const m = /^#map=(.+)$/.exec(deepHash);
         if (m && byHash.has(m[1])) selectNode(m[1]);
       });
