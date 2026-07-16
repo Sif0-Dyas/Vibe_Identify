@@ -1642,6 +1642,7 @@ function escapeHtml(s){
   const byHash = new Map();
   let mapMode = 'regions';                 // 'regions' | 'galaxy' | 'tree'
   let TREE = null;                         // {nodes, links, rows} for tree mode
+  let treeHits = [], hoverGenre = null;    // tree node hit-boxes + hovered node
   let selHash = null;
   let simCache = [];                       // last popup's /similar result
 
@@ -1921,7 +1922,7 @@ function escapeHtml(s){
       ctx.beginPath(); ctx.moveTo(x1,y1); ctx.bezierCurveTo(mx,y1,mx,y2,x2,y2); ctx.stroke();
     }
     // nodes + labels
-    proj.clear();
+    proj.clear(); treeHits = [];
     ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
     for (const nd of TREE.nodes){
       if (!show(nd.fam)) continue;
@@ -1933,15 +1934,17 @@ function escapeHtml(s){
       }
       const isFam = nd.kind === 'fam';
       const r = isFam ? 6 + Math.min(12, Math.sqrt(nd.count)) : 3.5 + Math.min(8, Math.sqrt(nd.count)*0.9);
+      treeHits.push({ node: nd, sx, sy, r });
       ctx.beginPath(); ctx.arc(sx, sy, r, 0, 6.2832);
       ctx.fillStyle = isFam ? famCss(nd.fam) : `hsl(${hueOf(nd.fam)} 48% 56%)`; ctx.fill();
       ctx.textAlign = isFam ? 'right' : 'left';   // fam labels left, sub labels right
       const lx = isFam ? sx - r - 6 : sx + r + 6;
-      const label = `${nd.label} ${nd.count}`;
+      const hot = nd === hoverGenre;
+      const label = hot ? `${nd.label} ${nd.count}` : nd.label;   // count only on hover
       ctx.font = isFam ? '800 15px Syne, sans-serif' : "500 11px 'JetBrains Mono', monospace";
       ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(0,0,0,0.92)';
       ctx.strokeText(label, lx, sy);
-      ctx.fillStyle = isFam ? '#e9eef7' : '#aeb8ca';
+      ctx.fillStyle = hot ? '#ffffff' : (isFam ? '#e9eef7' : '#aeb8ca');
       ctx.fillText(label, lx, sy);
     }
   }
@@ -2121,6 +2124,16 @@ function escapeHtml(s){
       else { rot.y += dx*0.006; rot.x = clamp(rot.x + dy*0.006, -1.3, 1.3); }
       return;
     }
+    const rr = canvas.getBoundingClientRect();
+    if (mapMode === 'tree'){                 // hover a genre node -> reveal its count
+      const mx = e.clientX-rr.left, my = e.clientY-rr.top;
+      let hit = null;
+      for (const h of treeHits){ if (Math.hypot(mx-h.sx, my-h.sy) <= h.r+6){ hit = h.node; break; } }
+      hoverGenre = hit;
+      canvas.style.cursor = hit ? 'pointer' : '';
+      if (tipEl && !tipEl.hidden) tipEl.hidden = true;
+      return;
+    }
     // hover tooltip: nearest node under the cursor
     if (!tipEl) return;
     const r = canvas.getBoundingClientRect();
@@ -2139,7 +2152,7 @@ function escapeHtml(s){
       canvas.style.cursor = 'pointer';
     } else if (!tipEl.hidden){ tipEl.hidden = true; canvas.style.cursor = ''; }
   });
-  canvas.addEventListener('pointerleave', () => { if (tipEl) tipEl.hidden = true; });
+  canvas.addEventListener('pointerleave', () => { if (tipEl) tipEl.hidden = true; hoverGenre = null; });
   const endDrag = e => { dragging=false; canvas.classList.remove('grabbing');
     try{ canvas.releasePointerCapture(e.pointerId); }catch(_){} };
   canvas.addEventListener('pointerup', e => {
