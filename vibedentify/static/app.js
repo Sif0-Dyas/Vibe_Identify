@@ -1726,11 +1726,13 @@ function escapeHtml(s){
     if (mapMode === 'galaxy'){
       // position == first 3 PCA axes -> a pure 3-D sonic galaxy
       const p = [0,1,2].map(j => pctl(NODES.map(n=>Math.abs(n.e?n.e[j]:0)),0.96)||1);
+      // gamma-spread the dense centre outward so genres separate more
+      const sp = v => { const a = Math.min(Math.abs(v), 1.15); return Math.sign(v) * Math.pow(a/1.15, 0.7) * 1.4; };
       for (const n of NODES){
         const r = rng(n.hash);
-        n.x3 = clamp((n.e?n.e[0]:0)/p[0],-1.2,1.2) + (r()-0.5)*0.04;
-        n.y3 = clamp((n.e?n.e[1]:0)/p[1],-1.2,1.2) + (r()-0.5)*0.04;
-        n.z3 = clamp((n.e?n.e[2]:0)/p[2],-1.2,1.2) + (r()-0.5)*0.04;
+        n.x3 = sp((n.e?n.e[0]:0)/p[0]) + (r()-0.5)*0.04;
+        n.y3 = sp((n.e?n.e[1]:0)/p[1]) + (r()-0.5)*0.04;
+        n.z3 = sp((n.e?n.e[2]:0)/p[2]) + (r()-0.5)*0.04;
         n.ph = r()*6.28;
       }
     } else {
@@ -1744,9 +1746,9 @@ function escapeHtml(s){
         const k = i + 0.5;
         const phi = Math.acos(1 - 2*k/rest.length);
         const th  = Math.PI * (1 + Math.sqrt(5)) * k;
-        anchors[f] = { x:0.82*Math.cos(th)*Math.sin(phi),
-                       y:0.82*Math.sin(th)*Math.sin(phi),
-                       z:0.82*Math.cos(phi) };
+        anchors[f] = { x:1.15*Math.cos(th)*Math.sin(phi),
+                       y:1.15*Math.sin(th)*Math.sin(phi),
+                       z:1.15*Math.cos(phi) };
       });
       // sub-clusters: within each family, group tracks by dominant style
       // (subgenre) and give each style its own sub-anchor on a small sphere
@@ -1757,8 +1759,8 @@ function escapeHtml(s){
         const cnt = {};
         for (const n of NODES) if (n.fam===f){ const s=n.style||f; cnt[s]=(cnt[s]||0)+1; }
         const styles = Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a]);
-        const famSpread = 0.07 + Math.sqrt(COUNTS[f]) * 0.019;
-        const subR = famSpread * (styles.length>1 ? 0.85 : 0);
+        const famSpread = 0.06 + Math.sqrt(COUNTS[f]) * 0.013;
+        const subR = famSpread * (styles.length>1 ? 0.55 : 0);
         styles.forEach((s,i) => {
           styleCount[`${f}||${s}`] = cnt[s];
           const a = anchors[f];
@@ -1791,7 +1793,7 @@ function escapeHtml(s){
         const s = n.style || n.fam;
         const a = styleAnchors[`${n.fam}||${s}`] || anchors[n.fam];
         const f = fa[n.fam];
-        const famSpread = 0.07 + Math.sqrt(COUNTS[n.fam]) * 0.019;
+        const famSpread = 0.06 + Math.sqrt(COUNTS[n.fam]) * 0.013;
         // tight sub-cluster so subgenres stay distinct
         const spread = Math.min(famSpread*0.42, 0.03 + Math.sqrt(styleCount[`${n.fam}||${s}`]||1)*0.011);
         const r = rng(n.hash);
@@ -2010,17 +2012,19 @@ function escapeHtml(s){
 
     // edges (unless hidden; selection's own web always shows)
     if (edgesOn || selHash){
-      ctx.lineWidth = 1;
       for (const ed of EDGES){
         const a = proj.get(ed.a), b = proj.get(ed.b);
         if (!a || !b) continue;
         const hot = selHash && (ed.a===selHash||ed.b===selHash);
         if (!edgesOn && !hot) continue;             // hidden: only the selection's web
-        let op;
-        if (selHash) op = hot ? 0.85 : 0.04;
-        else op = 0.05 + 0.11*Math.min(a.depth,b.depth);
+        // brightness + thickness scale with how closely the two tracks match
+        const s = clamp(((ed.sim ?? 0.75) - 0.6) / 0.4, 0, 1);
+        let op, lw;
+        if (selHash){ op = hot ? 0.9 : 0.05; lw = hot ? 1.8 : 1; }
+        else { op = (0.14 + 0.34*s) * (0.55 + 0.45*Math.min(a.depth,b.depth)); lw = 0.8 + 1.4*s; }
         if (op < 0.02) continue;
-        ctx.strokeStyle = hot ? `rgba(86,180,233,${op})` : `rgba(120,135,165,${op})`;
+        ctx.lineWidth = lw;
+        ctx.strokeStyle = hot ? `rgba(86,180,233,${op})` : `rgba(150,172,208,${op})`;
         ctx.beginPath(); ctx.moveTo(a.sx,a.sy); ctx.lineTo(b.sx,b.sy); ctx.stroke();
       }
     }
@@ -2205,7 +2209,7 @@ function escapeHtml(s){
     popEl.innerHTML = `
       <button class="pop-x" title="close">close ✕</button>
       <span class="pop-fam" style="background:${famCss(n.fam)}">${escapeHtml(n.fam)}</span>
-      <div class="pop-title">${escapeHtml(n.title)}</div>
+      <div class="pop-title">${escapeHtml(n.artist ? stripArtist(n.title, n.artist) : n.title)}</div>
       ${n.artist ? `<div class="pop-artist">${escapeHtml(n.artist)}</div>` : ''}
       <div class="pop-meta">${meta}</div>
       ${n.flag ? `<div class="pop-flag">⚠ low-confidence read — its closest neighbours sound like
