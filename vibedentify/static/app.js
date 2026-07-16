@@ -2513,28 +2513,29 @@ function escapeHtml(s){
     harmonic = !harmonic; harmonicBtn.classList.toggle('on', harmonic);
   });
 
-  // keyboard nav: arrows orbit · Shift+arrows pan · +/- zoom · Space play/pause
+  // keyboard nav: W/S zoom · A/D orbit · arrows pan · +/- zoom · Space play/pause
   //               · f fit · Esc close
   document.addEventListener('keydown', e => {
     if (!document.body.classList.contains('view-map')) return;
     const tag = e.target.tagName || '';
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
-    const arrows = ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'];
     const PAN = 45, ROT = 0.12;
-    switch (e.key){
-      case '+': case '=': view.zoom = clamp(view.zoom*1.15, 0.3, 60); anim=null; break;
-      case '-': case '_': view.zoom = clamp(view.zoom/1.15, 0.3, 60); anim=null; break;
-      // plain arrow orbits (rotate the cloud); Shift+arrow pans (move the camera)
-      case 'ArrowLeft':  if (e.shiftKey) view.panx += PAN; else rot.y -= ROT; break;
-      case 'ArrowRight': if (e.shiftKey) view.panx -= PAN; else rot.y += ROT; break;
-      case 'ArrowUp':    if (e.shiftKey) view.pany += PAN; else rot.x = clamp(rot.x-ROT, -1.3, 1.3); break;
-      case 'ArrowDown':  if (e.shiftKey) view.pany -= PAN; else rot.x = clamp(rot.x+ROT, -1.3, 1.3); break;
+    const k = e.key.toLowerCase();
+    switch (k){
+      case '+': case '=': case 'w': view.zoom = clamp(view.zoom*1.15, 0.3, 60); anim=null; break;
+      case '-': case '_': case 's': view.zoom = clamp(view.zoom/1.15, 0.3, 60); anim=null; break;
+      case 'a': rot.y -= ROT; break;                 // orbit left
+      case 'd': rot.y += ROT; break;                 // orbit right
+      case 'arrowleft':  view.panx += PAN; break;    // arrows pan the view
+      case 'arrowright': view.panx -= PAN; break;
+      case 'arrowup':    view.pany += PAN; break;
+      case 'arrowdown':  view.pany -= PAN; break;
       case ' ': toggleSpin(); break;
-      case 'f': case 'F': applyFilter(null); break;
-      case 'Escape': closePopup(); break;
+      case 'f': applyFilter(null); break;
+      case 'escape': closePopup(); break;
       default: return;
     }
-    if (arrows.includes(e.key) || e.key === ' ') e.preventDefault();
+    if (k.startsWith('arrow') || k === ' ') e.preventDefault();
   });
   modeEl && modeEl.addEventListener('click', e => {
     const b = e.target.closest('.mm'); if (!b || b.dataset.mode===mapMode) return;

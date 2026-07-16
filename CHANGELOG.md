@@ -26,10 +26,10 @@ _Work in progress lands here, then gets stamped with a version + date on release
   slide across the scene, or **Shift + arrow keys**. A **⏸ / ▶ button** next to
   the orbit-speed slider pauses/resumes the auto-spin (icon reflects the state,
   and stays in sync when you drag the slider to/from 0); **Space** toggles it
-  too. Keyboard summary: arrows orbit · Shift+arrows pan · `+`/`-` zoom · Space
-  play/pause · `f` fit · `esc` close. A collapsible **nav legend** in the map's
-  top-left corner lists the full mouse + keyboard control scheme (state
-  remembered).
+  too. Keyboard scheme: **W/S** zoom · **A/D** orbit · **arrow keys** pan · `+`/`-`
+  also zoom · Space play/pause · `f` fit · `esc` close (mouse: left-drag orbit,
+  right/middle/Shift-drag pan, scroll zoom). A collapsible **nav legend** in the
+  map's top-left corner lists the controls (state remembered).
 - **Genre Map (3-D constellation view).** New **Map** tab (header `List | Map`)
   renders the entire scanned library as a rotating 3-D point-cloud on black,
   inspired by pulse.roots. Two new read-only routes: `GET /map` returns every
@@ -67,6 +67,13 @@ _Work in progress lands here, then gets stamped with a version + date on release
   mode against a throwaway DB.
 
 ### Changed
+- **User guide rewritten for end users.** `docs/USAGE.md` (the in-app **Guide**
+  tab) is now task- and decision-oriented — it explains *which* analyze method,
+  map layout (regions / galaxy / tree), and lens to pick and *why*, and walks
+  through every capability from a new user's point of view, rather than covering
+  installation and internals (those live in the README). Paragraphs are single-
+  line so the in-app markdown renderer fills them correctly (bold no longer
+  breaks across a wrapped line).
 - **Restructured the backend into a package.** The ~1.2 k-line `genre_gui.py`
   monolith is split into a `vibedentify/` package — `config.py`, `db.py`,
   `analysis.py`, a single-Blueprint `routes.py`, and a `create_app()` factory
