@@ -87,7 +87,9 @@
       <button class="mm active" data-mode="regions" type="button">&#9678; regions</button>
       <button class="mm" data-mode="galaxy" type="button">&#10022; galaxy</button>
     </div>
-    <select id="map-filter" class="map-filter" title="show only one genre">
+    <button id="map-harmonic" class="map-toggle" type="button" title="harmonic mixing: with a track selected, highlight key + BPM compatible tracks">&#127911;</button>
+    <button id="map-edges" class="map-toggle on" type="button" title="show / hide the connection lines">&#8776;</button>
+    <select id="map-filter" class="map-filter" title="show only one genre (or just the flagged reads)">
       <option value="">all genres</option>
     </select>
     <label class="map-spin-wrap" title="orbit speed (drag to 0 to stop)">&#8635;
@@ -100,6 +102,7 @@
   <div id="map-stage">
     <canvas id="map-canvas"></canvas>
     <div id="map-legend"></div>
+    <div id="map-tip" hidden></div>
     <div id="map-pop" hidden></div>
   </div>
 </section>

@@ -1648,6 +1648,8 @@ function escapeHtml(s){
   const rot = { x: -0.15, y: 0.5 };        // orbit angles
   const view = { zoom: 1, panx: 0, pany: 0 };
   let spinSpeed = 0.0022, running = false, rafId = null, filterFam = null;
+  let edgesOn = true, harmonic = false, flaggedOnly = false;
+  const tipEl = document.getElementById('map-tip');
   let anim = null;                         // camera tween
   const proj = new Map();                  // hash -> {sx,sy,z,r} for this frame
   const CAM = 2.7;                         // camera distance (world units)
@@ -1676,6 +1678,23 @@ function escapeHtml(s){
   const keyfmt = n => n.camelot
     ? `${n.camelot} ${n.key||''} ${(n.scale||'').slice(0,3)}`.trim()
     : (n.key ? `${n.key} ${(n.scale||'').slice(0,3)}`.trim() : '--');
+
+  /* ---- harmonic mixing (Camelot wheel + BPM tolerance) ------------- */
+  const camelot = c => { const m = /^(\d{1,2})([AB])$/.exec((c||'').trim().toUpperCase());
+    return m ? { n:+m[1], l:m[2] } : null; };
+  function keyCompatible(a, b){
+    const A = camelot(a), B = camelot(b);
+    if (!A || !B) return false;
+    if (A.n === B.n) return true;                       // same, or relative maj/min
+    const d = Math.abs(A.n - B.n);
+    return A.l === B.l && (d === 1 || d === 11);        // ±1 around the 12-hour wheel
+  }
+  function bpmCompatible(a, b){
+    if (a == null || b == null) return true;            // unknown -> don't exclude
+    const r = Math.max(a,b) / Math.min(a,b);
+    const near = x => Math.abs(x - 1) <= 0.06;          // ±6%
+    return near(r) || near(r/2) || near(r*2);           // same, or half / double-time
+  }
   const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
   const pctl = (arr,p) => { if(!arr.length) return 1;
     const s=arr.slice().sort((x,y)=>x-y);
@@ -1814,9 +1833,10 @@ function escapeHtml(s){
     const fe = document.getElementById('map-filter');
     if (fe){
       const cur = fe.value;
-      fe.innerHTML = `<option value="">all genres</option>` +
-        FAMS.map(f => `<option value="${escapeHtml(f)}">${escapeHtml(f)} · ${COUNTS[f]}</option>`).join('');
-      fe.value = FAMS.includes(cur) ? cur : '';
+      fe.innerHTML = `<option value="">all genres</option>`
+        + `<option value="__flagged__">⚠ likely misreads</option>`
+        + FAMS.map(f => `<option value="${escapeHtml(f)}">${escapeHtml(f)} · ${COUNTS[f]}</option>`).join('');
+      fe.value = (cur === '__flagged__' || FAMS.includes(cur)) ? cur : '';
     }
   }
 
@@ -1852,6 +1872,7 @@ function escapeHtml(s){
     const order = [];
     for (const n of NODES){
       if (filterFam && n.fam !== filterFam) continue;   // genre filter
+      if (flaggedOnly && !n.flag) continue;             // "likely misreads" filter
       const x =  n.x3*cy + n.z3*sy;
       const z = -n.x3*sy + n.z3*cy;
       const y2 = n.y3*cx - z*sx;
@@ -1870,18 +1891,21 @@ function escapeHtml(s){
     ctx.clearRect(0,0,W,H);
     ctx.fillStyle = '#000'; ctx.fillRect(0,0,W,H);
 
-    // edges
-    ctx.lineWidth = 1;
-    for (const ed of EDGES){
-      const a = proj.get(ed.a), b = proj.get(ed.b);
-      if (!a || !b) continue;
-      let op;
-      if (selHash) op = (ed.a===selHash||ed.b===selHash) ? 0.85 : 0.04;
-      else op = 0.05 + 0.11*Math.min(a.depth,b.depth);
-      if (op < 0.02) continue;
-      const hot = selHash && (ed.a===selHash||ed.b===selHash);
-      ctx.strokeStyle = hot ? `rgba(86,180,233,${op})` : `rgba(120,135,165,${op})`;
-      ctx.beginPath(); ctx.moveTo(a.sx,a.sy); ctx.lineTo(b.sx,b.sy); ctx.stroke();
+    // edges (unless hidden; selection's own web always shows)
+    if (edgesOn || selHash){
+      ctx.lineWidth = 1;
+      for (const ed of EDGES){
+        const a = proj.get(ed.a), b = proj.get(ed.b);
+        if (!a || !b) continue;
+        const hot = selHash && (ed.a===selHash||ed.b===selHash);
+        if (!edgesOn && !hot) continue;             // hidden: only the selection's web
+        let op;
+        if (selHash) op = hot ? 0.85 : 0.04;
+        else op = 0.05 + 0.11*Math.min(a.depth,b.depth);
+        if (op < 0.02) continue;
+        ctx.strokeStyle = hot ? `rgba(86,180,233,${op})` : `rgba(120,135,165,${op})`;
+        ctx.beginPath(); ctx.moveTo(a.sx,a.sy); ctx.lineTo(b.sx,b.sy); ctx.stroke();
+      }
     }
 
     // Labels with semantic zoom (LOD): family names when zoomed out, subgenre
@@ -1929,14 +1953,26 @@ function escapeHtml(s){
     }
 
     // nodes far -> near
+    const selNode = selHash ? byHash.get(selHash) : null;
+    const harmonicOn = harmonic && selNode;
     for (const h of order){
       const p = proj.get(h), n = p.node;
       const tw = 0.9 + 0.1*Math.sin(t*1.6 + n.ph);
       const light = (26 + 44*p.depth) * tw;
-      ctx.globalAlpha = 0.45 + 0.55*p.depth;
+      let compatible = false, dim = 1;
+      if (harmonicOn && h !== selHash){         // harmonic mixing: mute non-matches
+        compatible = keyCompatible(selNode.camelot, n.camelot) && bpmCompatible(selNode.bpm, n.bpm);
+        dim = compatible ? 1 : 0.1;
+      }
+      ctx.globalAlpha = (0.45 + 0.55*p.depth) * dim;
       ctx.beginPath(); ctx.arc(p.sx, p.sy, p.r, 0, 6.2832);
       ctx.fillStyle = `hsl(${n.hue} 64% ${clamp(light,18,82)}%)`;
       ctx.fill();
+      if (compatible){                          // key + BPM compatible -> teal ring
+        ctx.globalAlpha = 0.5 + 0.5*p.depth;
+        ctx.beginPath(); ctx.arc(p.sx, p.sy, p.r+2.5, 0, 6.2832);
+        ctx.lineWidth = 1.6; ctx.strokeStyle = 'rgba(80,224,180,0.95)'; ctx.stroke();
+      }
       if (n.flag){                              // likely misread -> amber ring
         ctx.globalAlpha = 0.5 + 0.5*p.depth;
         ctx.beginPath(); ctx.arc(p.sx, p.sy, p.r+2.5, 0, 6.2832);
@@ -1961,11 +1997,31 @@ function escapeHtml(s){
     canvas.classList.add('grabbing'); canvas.setPointerCapture(e.pointerId); anim=null;
   });
   canvas.addEventListener('pointermove', e => {
-    if (!dragging) return;
-    const dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
-    if (Math.abs(dx)+Math.abs(dy) > 2) moved=true;
-    rot.y += dx*0.006; rot.x = clamp(rot.x + dy*0.006, -1.3, 1.3);
+    if (dragging){
+      const dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
+      if (Math.abs(dx)+Math.abs(dy) > 2) moved=true;
+      rot.y += dx*0.006; rot.x = clamp(rot.x + dy*0.006, -1.3, 1.3);
+      return;
+    }
+    // hover tooltip: nearest node under the cursor
+    if (!tipEl) return;
+    const r = canvas.getBoundingClientRect();
+    const mx = e.clientX-r.left, my = e.clientY-r.top;
+    let best=null, bz=-Infinity;
+    for (const [, p] of proj){
+      if (Math.hypot(mx-p.sx, my-p.sy) <= p.r+4 && p.z>bz){ bz=p.z; best=p; }
+    }
+    if (best){
+      const n = best.node;
+      tipEl.innerHTML = `<b>${escapeHtml(n.title)}</b><span>${escapeHtml(n.style||'?')} · `
+        + `${n.bpm?Math.round(n.bpm):'--'} bpm · ${escapeHtml(n.camelot||'--')}</span>`;
+      tipEl.style.left = Math.min(mx+14, W-220)+'px';
+      tipEl.style.top  = (my+14)+'px';
+      tipEl.hidden = false;
+      canvas.style.cursor = 'pointer';
+    } else if (!tipEl.hidden){ tipEl.hidden = true; canvas.style.cursor = ''; }
   });
+  canvas.addEventListener('pointerleave', () => { if (tipEl) tipEl.hidden = true; });
   const endDrag = e => { dragging=false; canvas.classList.remove('grabbing');
     try{ canvas.releasePointerCapture(e.pointerId); }catch(_){} };
   canvas.addEventListener('pointerup', e => {
@@ -2155,6 +2211,7 @@ function escapeHtml(s){
              t:{rx, ry, z:2.0, px:0, py:0}, t0:performance.now(), dur:640 };
   }
   function applyFilter(fam){          // null = show all genres
+    flaggedOnly = false;
     filterFam = fam || null;
     const fe = document.getElementById('map-filter');
     if (fe) fe.value = filterFam || '';
@@ -2165,11 +2222,49 @@ function escapeHtml(s){
 
   const spinEl = document.getElementById('map-spin');   // orbit-speed slider
   const applySpin = () => { if (spinEl) spinSpeed = (spinEl.value / 100) * 0.006; };
+  const syncSpin = () => { if (spinEl) spinEl.value = Math.round(spinSpeed / 0.006 * 100); };
   spinEl && spinEl.addEventListener('input', applySpin);
   applySpin();
 
   const filterEl = document.getElementById('map-filter');
-  filterEl && filterEl.addEventListener('change', () => applyFilter(filterEl.value));
+  filterEl && filterEl.addEventListener('change', () => {
+    if (filterEl.value === '__flagged__'){ filterFam = null; flaggedOnly = true; closePopup(); resetView(); }
+    else applyFilter(filterEl.value);
+  });
+
+  // toggles: connection lines + harmonic-mix highlighting
+  const edgesBtn = document.getElementById('map-edges');
+  edgesBtn && edgesBtn.addEventListener('click', () => {
+    edgesOn = !edgesOn; edgesBtn.classList.toggle('on', edgesOn);
+  });
+  const harmonicBtn = document.getElementById('map-harmonic');
+  harmonicBtn && harmonicBtn.addEventListener('click', () => {
+    harmonic = !harmonic; harmonicBtn.classList.toggle('on', harmonic);
+  });
+
+  // keyboard: +/- zoom, arrows rotate, space toggles spin, f fit, esc close
+  let lastSpin = 0.0022;
+  document.addEventListener('keydown', e => {
+    if (!document.body.classList.contains('view-map')) return;
+    const tag = e.target.tagName || '';
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    const arrows = ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'];
+    switch (e.key){
+      case '+': case '=': view.zoom = clamp(view.zoom*1.15, 0.3, 60); anim=null; break;
+      case '-': case '_': view.zoom = clamp(view.zoom/1.15, 0.3, 60); anim=null; break;
+      case 'ArrowLeft':  rot.y -= 0.12; break;
+      case 'ArrowRight': rot.y += 0.12; break;
+      case 'ArrowUp':    rot.x = clamp(rot.x-0.12, -1.3, 1.3); break;
+      case 'ArrowDown':  rot.x = clamp(rot.x+0.12, -1.3, 1.3); break;
+      case ' ':
+        if (spinSpeed > 0){ lastSpin = spinSpeed; spinSpeed = 0; } else { spinSpeed = lastSpin || 0.0022; }
+        syncSpin(); break;
+      case 'f': case 'F': applyFilter(null); break;
+      case 'Escape': closePopup(); break;
+      default: return;
+    }
+    if (arrows.includes(e.key) || e.key === ' ') e.preventDefault();
+  });
   modeEl && modeEl.addEventListener('click', e => {
     const b = e.target.closest('.mm'); if (!b || b.dataset.mode===mapMode) return;
     mapMode = b.dataset.mode;
