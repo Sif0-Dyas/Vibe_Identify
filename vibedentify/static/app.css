@@ -86,12 +86,28 @@ header .sub{color:var(--dim); font-size:11.5px; font-family:'JetBrains Mono',mon
 }
 .sib-btn:hover{color:var(--text); border-color:var(--dim)}
 /* sibling editor panel */
-#sib-panel, #vibe-panel{
+#sib-panel, #vibe-panel, #flag-panel{
   display:none; position:fixed; top:0; right:0; width:min(480px,100vw); height:100vh;
   background:var(--panel); border-left:1px solid var(--line); z-index:100;
   flex-direction:column; overflow:hidden;
 }
-#sib-panel.open, #vibe-panel.open{display:flex}
+#sib-panel.open, #vibe-panel.open, #flag-panel.open{display:flex}
+
+/* review-reads (misread audit) panel */
+.flag-note{ font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--dim); line-height:1.6; margin-bottom:12px; }
+.flag-row{ display:flex; align-items:center; gap:10px; padding:8px 2px; border-bottom:1px solid var(--line); }
+.flag-main{ flex:1; min-width:0; }
+.flag-title{ font-family:'Syne',sans-serif; font-weight:700; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.flag-sub{ font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--dim); margin-top:2px; }
+.flag-sub b{ color:var(--text); font-weight:500; }
+.flag-suggest{ color:#ffb03b !important; }
+.flag-acts{ display:flex; gap:5px; flex:none; }
+.flag-acts button{
+  font-family:'JetBrains Mono',monospace; font-size:10px; padding:3px 9px; border-radius:5px;
+  background:var(--panel-2); border:1px solid var(--line); color:var(--dim); cursor:pointer;
+}
+.flag-acts .flag-go:hover{ color:var(--text); border-color:var(--accent-a); }
+.flag-acts .flag-omit:hover{ color:var(--err); border-color:var(--err); }
 .sib-hd{
   display:flex; align-items:center; justify-content:space-between;
   padding:14px 18px; border-bottom:1px solid var(--line);
@@ -225,6 +241,12 @@ input[type=file]{display:none}
 .override-btn:hover{color:var(--text); border-color:var(--dimmer)}
 .omit-btn{ color:var(--err); border-style:solid; border-color:transparent; }
 .omit-btn:hover{ color:var(--err); border-color:var(--err); background:rgba(229,86,79,.10); }
+.row-flag{
+  margin-top:5px; font-family:'JetBrains Mono',monospace; font-size:9.5px;
+  color:#ffb03b; cursor:pointer;
+}
+.row-flag:hover{ text-decoration:underline; }
+.row-flag b{ color:#ffcf8a; }
 .override-editor{
   display:flex; align-items:center; gap:6px; margin-top:8px;
   padding:7px 8px; background:var(--panel); border:1px solid var(--line);
@@ -490,7 +512,7 @@ footer, .actionbar{
   --grad:linear-gradient(90deg,#00C853,#FFC63B);
 }
 /* --- beveled 3D panel treatment (raised) --- */
-.left, .row, header, footer, .chip, #sib-panel, #vibe-panel{
+.left, .row, header, footer, .chip, #sib-panel, #vibe-panel, #flag-panel{
   border-color:var(--line);
 }
 .left, header, footer{
@@ -607,7 +629,7 @@ header .sub{color:#E4E7EF; text-shadow:1px 1px 0 #000}
   border-color:#8F94A4}
 .tagchip.newtag:hover{border-color:var(--gold)}
 /* --- panels (vibes / siblings): beveled windows --- */
-#sib-panel, #vibe-panel{
+#sib-panel, #vibe-panel, #flag-panel{
   border-left:2px solid var(--bev-lt);
   background:var(--panel);
 }
@@ -915,3 +937,11 @@ body.view-map .lensbar{ display:none; }
   padding:7px; cursor:pointer;
 }
 .pop-omit:hover{ color:var(--err); border-color:var(--err); background:rgba(229,86,79,.10); }
+
+/* likely-misread flag */
+.pop-flag{
+  margin:8px 0; padding:7px 10px; border-radius:7px;
+  background:rgba(255,176,59,.12); border:1px solid rgba(255,176,59,.4);
+  color:#ffcf8a; font-family:'JetBrains Mono',monospace; font-size:10.5px; line-height:1.5;
+}
+.pop-flag b{ color:#ffb03b; }

@@ -97,3 +97,23 @@ def test_forget_deletes_track(client):
     assert r1.get_json()["deleted"] == 1
     # forgetting again is a harmless no-op (already gone)
     assert client.post(f"/forget/{h}").get_json()["deleted"] == 0
+
+
+def test_audit_route_returns_list(client):
+    r = client.get("/audit")
+    assert r.status_code == 200
+    assert isinstance(r.get_json(), list)  # empty on the throwaway DB
+
+
+def test_misread_flag_logic():
+    # the core rule: a shaky read whose close neighbours agree on a different
+    # family gets flagged; a confident read does not.
+    from vibedentify import insight
+
+    close_bass = [(0.90, "Dubstep"), (0.88, "Dubstep"), (0.87, "Drum n Bass")]
+    flagged = insight._score("K-Pop", 0.29, close_bass)
+    assert flagged["flag"] is True
+    assert flagged["suggested_family"] == insight.family_of("Dubstep")
+
+    confident = insight._score("K-Pop", 0.80, close_bass)
+    assert confident["flag"] is False

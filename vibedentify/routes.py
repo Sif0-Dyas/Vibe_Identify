@@ -9,6 +9,7 @@ from pathlib import Path
 
 from flask import Blueprint, Response, jsonify, render_template, request, send_file
 
+from . import insight
 from .analysis import (
     FINE_HOP_SECONDS,
     _lock,
@@ -92,6 +93,9 @@ def analyze_route():
             result = analyze(p)  # analyze() locks its own model inference
             emb = result.pop("emb_mean", None)
             payload = build_payload(f.filename, None, title, tags, result)
+            nc = insight.check(emb, *insight.dominant(payload)) if emb is not None else None
+            if nc:
+                payload["neighbor_check"] = nc  # flag likely misreads
             cache_put(h, f.filename, None, title, payload, emb)
             payload["hash"] = h
             payload["cached"] = False
@@ -596,6 +600,14 @@ def _map_node(h, title, filename, payload):
     }
 
 
+@bp.get("/audit")
+def audit_route():
+    """Scan the library for likely-misread genres: a low-confidence read whose
+    closest sonic neighbours strongly point to a different family. Flags + a
+    suggested genre; never changes anything."""
+    return jsonify(insight.audit())
+
+
 @bp.get("/map")
 def map_route():
     import numpy as np
@@ -651,6 +663,12 @@ def map_route():
                 nodes[i]["e"] = [round(float(v), 4) for v in proj[k]]
         except np.linalg.LinAlgError:
             pass
+    # annotate likely-misread reads so the map can mark them (fresh, whole-library)
+    flags = {f["hash"]: f for f in insight.audit()}
+    for n in nodes:
+        fl = flags.get(n["hash"])
+        n["flag"] = bool(fl)
+        n["suggest"] = fl["suggested_style"] if fl else None
     return jsonify({"nodes": nodes, "edges": edges})
 
 

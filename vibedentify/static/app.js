@@ -760,6 +760,21 @@ function finishRow(row, data, file){
   });
   oInput.addEventListener('keydown', e => { if (e.key === 'Enter') oSave.click(); });
 
+  // likely-misread hint: click to override with the neighbour-suggested genre
+  const nc = data.neighbor_check;
+  if (nc && nc.flag){
+    const warn = document.createElement('div');
+    warn.className = 'row-flag';
+    warn.innerHTML = `⚠ low-confidence — sounds like <b>${escapeHtml(nc.suggested_style)}</b>`;
+    warn.title = 'nearest tracks disagree with this read · click to override to the suggestion';
+    warn.addEventListener('click', () => {
+      overrideBtn.click();                 // opens + clears the editor
+      oInput.value = nc.suggested_style;
+      oInput.focus();
+    });
+    row.children[2].appendChild(warn);
+  }
+
   // find this track's result entry so we can use the stored file/filepath
   function getResult(){ return results.find(r => r.row === row); }
 
@@ -1898,6 +1913,11 @@ function escapeHtml(s){
       ctx.beginPath(); ctx.arc(p.sx, p.sy, p.r, 0, 6.2832);
       ctx.fillStyle = `hsl(${n.hue} 64% ${clamp(light,18,82)}%)`;
       ctx.fill();
+      if (n.flag){                              // likely misread -> amber ring
+        ctx.globalAlpha = 0.5 + 0.5*p.depth;
+        ctx.beginPath(); ctx.arc(p.sx, p.sy, p.r+2.5, 0, 6.2832);
+        ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,176,59,0.95)'; ctx.stroke();
+      }
       if (h === selHash){
         ctx.globalAlpha = 1;
         ctx.beginPath(); ctx.arc(p.sx, p.sy, p.r+3.5, 0, 6.2832);
@@ -1970,6 +1990,8 @@ function escapeHtml(s){
       <div class="pop-title">${escapeHtml(n.title)}</div>
       ${n.artist ? `<div class="pop-artist">${escapeHtml(n.artist)}</div>` : ''}
       <div class="pop-meta">${meta}</div>
+      ${n.flag ? `<div class="pop-flag">⚠ low-confidence read — its closest neighbours sound like
+        <b>${escapeHtml(n.suggest || '?')}</b></div>` : ''}
       <div id="pop-pick"><div class="pop-bar" style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--dim)">finding a match…</div></div>
       ${other.length ? `<div class="pop-h">also reads as</div>
         <div class="pop-artists">${other.map(s=>`<span class="chip">${escapeHtml(s)}</span>`).join('')}</div>` : ''}
@@ -2145,4 +2167,58 @@ function escapeHtml(s){
     if (!document.body.classList.contains('view-map') || !NODES.length) return;
     clearTimeout(rz); rz = setTimeout(resize, 150);
   });
+
+  // let other UI (the review-reads panel) jump to a track on the map
+  window.vibeMapGoto = (hash) => {
+    try{ history.replaceState(null, '', '#map=' + hash); }catch(_){}
+    switchTo('map');
+  };
+})();
+
+/* ---- review reads: audit the library for likely-misread genres ---- */
+(() => {
+  const btn = document.getElementById('flag-btn');
+  const panel = document.getElementById('flag-panel');
+  const body = document.getElementById('flag-body');
+  const closeB = document.getElementById('flag-close');
+  if (!btn || !panel) return;
+  closeB && closeB.addEventListener('click', () => panel.classList.remove('open'));
+
+  btn.addEventListener('click', async () => {
+    panel.classList.add('open');
+    body.innerHTML = `<div class="flag-note">scanning your library…</div>`;
+    let list;
+    try{ list = await fetch('/audit').then(r => r.json()); }
+    catch(_){ body.innerHTML = `<div class="flag-note">audit failed</div>`; return; }
+    if (!list.length){ body.innerHTML = `<div class="flag-note">✓ no likely misreads found.</div>`; return; }
+    body.innerHTML =
+      `<div class="flag-note">${list.length} low-confidence reads whose closest sonic neighbours
+        point elsewhere. These are only hints — review and omit the wrong ones.</div>` +
+      list.map(f => `
+        <div class="flag-row" data-h="${escapeHtml(f.hash)}">
+          <div class="flag-main">
+            <div class="flag-title">${escapeHtml(f.title)}</div>
+            <div class="flag-sub">reads as <b>${escapeHtml(f.style||'?')}</b> ${(f.confidence*100).toFixed(0)}%
+              · sounds like <b class="flag-suggest">${escapeHtml(f.suggested_style)}</b>
+              (${(f.agreement*100).toFixed(0)}% agree)</div>
+          </div>
+          <div class="flag-acts">
+            <button class="flag-go" title="show on the map">map</button>
+            <button class="flag-omit" title="delete this track's analysis">omit</button>
+          </div>
+        </div>`).join('');
+    body.querySelectorAll('.flag-row').forEach(row => {
+      const h = row.getAttribute('data-h');
+      row.querySelector('.flag-go').onclick = () => {
+        panel.classList.remove('open');
+        if (window.vibeMapGoto) window.vibeMapGoto(h);
+      };
+      row.querySelector('.flag-omit').onclick = async () => {
+        try{ await fetch(`/forget/${h}`, {method:'POST'}); }catch(_){}
+        row.remove();
+      };
+    });
+  });
+
+  if (location.hash === '#review') btn.click();   // deep link: open the audit
 })();
