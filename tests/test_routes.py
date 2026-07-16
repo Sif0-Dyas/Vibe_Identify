@@ -86,3 +86,14 @@ def test_vibes_create_and_duplicate(client):
     assert r1.get_json()["name"] == "Test Vibe"
     r2 = client.post("/vibes", json={"name": "Test Vibe"})
     assert r2.status_code == 409
+
+
+def test_forget_deletes_track(client):
+    # analyze a track, then forget it -> removed from the cache
+    data = {"file": (io.BytesIO(_tiny_wav_bytes()), "gone.wav")}
+    h = client.post("/analyze", data=data, content_type="multipart/form-data").get_json()["hash"]
+    r1 = client.post(f"/forget/{h}")
+    assert r1.status_code == 200
+    assert r1.get_json()["deleted"] == 1
+    # forgetting again is a harmless no-op (already gone)
+    assert client.post(f"/forget/{h}").get_json()["deleted"] == 0
