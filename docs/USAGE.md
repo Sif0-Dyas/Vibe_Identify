@@ -279,14 +279,26 @@ neighbours; colour = genre family.
 
 ### Navigating
 
-- **Drag** to orbit, **scroll** to zoom *into wherever you point* (up to 60×).
+Three independent camera moves — **orbit** (rotate the cloud), **pan** (slide
+across it), and **zoom** (dolly in/out):
+
+- **Mouse:**
+  - **Left-drag** — orbit.
+  - **Right-drag**, **middle-drag**, or **Shift + left-drag** — pan (fly across
+    the scene without rotating).
+  - **Scroll** — zoom *into wherever you point* (up to 60×).
+- **Keyboard:**
+  - **Arrows** — orbit · **Shift + arrows** — pan.
+  - **`+` / `-`** — zoom.
+  - **`space`** — play / pause the orbit · **`f`** — fit · **`esc`** — close the
+    popup.
 - **Click a track** to select it — the popup opens and **the orbit re-centres to
   spin around that track**; close the popup and it returns to the normal centre
   orbit.
 - **Hover** a dot for a quick tooltip (title / style / BPM / key).
-- **↻ slider** sets the orbit speed (drag to 0 to stop).
-- **Keyboard:** `+`/`-` zoom · arrows rotate · `space` toggles the spin · `f`
-  fit · `esc` close.
+- **⏸ / ▶ button** and the **↻ slider** control the auto-orbit: the button
+  pauses/resumes it (same as `space`), the slider sets its speed (drag to 0 to
+  stop).
 
 ### Controls (top bar)
 
@@ -299,6 +311,8 @@ neighbours; colour = genre family.
   shows).
 - **Genre filter** — a dropdown (and clickable legend chips): show only one
   genre, or choose **⚠ likely misreads** to show just the flagged tracks.
+- **⏸ / ▶ + ↻ slider** — pause/resume and set the auto-orbit speed (see
+  *Navigating* above).
 - **fit** — reset the view (and clear any filter).
 
 ### The popup

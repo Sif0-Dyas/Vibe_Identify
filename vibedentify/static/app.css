@@ -900,6 +900,7 @@ body.view-guide .lensbar{ display:none; }
 }
 #map-canvas{ width:100%; height:100%; display:block; cursor:grab; touch-action:none; }
 #map-canvas.grabbing{ cursor:grabbing; }
+#map-canvas.panning{ cursor:move; }
 
 /* ---- legend ---- */
 #map-legend{
@@ -913,6 +914,28 @@ body.view-guide .lensbar{ display:none; }
 }
 .leg:hover{ color:var(--text); background:rgba(255,255,255,.06); }
 .leg .dot{ width:8px; height:8px; border-radius:50%; }
+
+/* ---- navigation key legend (top-left) ---- */
+#map-keys{
+  position:absolute; top:12px; left:12px; z-index:13;
+  background:rgba(13,15,20,.78); border:1px solid var(--line); border-radius:8px;
+  backdrop-filter:blur(3px); overflow:hidden; max-width:190px;
+}
+#map-keys-head{
+  display:block; width:100%; text-align:left; background:none; border:none;
+  color:var(--dim); cursor:pointer; padding:5px 9px;
+  font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:.04em;
+}
+#map-keys-head:hover{ color:var(--text); }
+#map-keys.collapsed #map-keys-body{ display:none; }
+#map-keys-body{ padding:2px 9px 7px; }
+.mk-row{
+  display:flex; justify-content:space-between; gap:14px;
+  font-family:'JetBrains Mono',monospace; font-size:9.5px; line-height:1.7;
+}
+.mk-row span{ color:var(--dim); }
+.mk-row b{ color:var(--text); font-weight:600; }
+.mk-sep{ height:1px; background:var(--line); margin:4px 0; }
 
 /* ---- popup ---- */
 #map-pop{

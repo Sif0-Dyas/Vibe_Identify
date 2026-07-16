@@ -21,6 +21,15 @@ Keep the newest version on top. Under each version, group lines under
 _Work in progress lands here, then gets stamped with a version + date on release._
 
 ### Added
+- **Map: fuller camera navigation.** The 3-D view now supports **pan** in
+  addition to orbit + zoom — **right-drag / middle-drag / Shift + left-drag** to
+  slide across the scene, or **Shift + arrow keys**. A **⏸ / ▶ button** next to
+  the orbit-speed slider pauses/resumes the auto-spin (icon reflects the state,
+  and stays in sync when you drag the slider to/from 0); **Space** toggles it
+  too. Keyboard summary: arrows orbit · Shift+arrows pan · `+`/`-` zoom · Space
+  play/pause · `f` fit · `esc` close. A collapsible **nav legend** in the map's
+  top-left corner lists the full mouse + keyboard control scheme (state
+  remembered).
 - **Genre Map (3-D constellation view).** New **Map** tab (header `List | Map`)
   renders the entire scanned library as a rotating 3-D point-cloud on black,
   inspired by pulse.roots. Two new read-only routes: `GET /map` returns every

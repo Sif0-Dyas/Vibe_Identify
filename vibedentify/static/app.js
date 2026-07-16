@@ -2179,17 +2179,22 @@ function escapeHtml(s){
   function startLoop(){ if(!running){ running=true; rafId=requestAnimationFrame(frame); } }
   function stopLoop(){ running=false; if(rafId) cancelAnimationFrame(rafId); rafId=null; }
 
-  /* ---- interaction: orbit / zoom / click --------------------------- */
-  let dragging=false, moved=false, lx=0, ly=0;
+  /* ---- interaction: orbit / pan / zoom / click --------------------- */
+  // left-drag orbits; right / middle / Shift+left-drag pans (translate); wheel
+  // zooms toward the cursor. Panning lets you fly through the 3-D scene.
+  let dragging=false, panning=false, moved=false, lx=0, ly=0;
   canvas.addEventListener('pointerdown', e => {
     dragging=true; moved=false; lx=e.clientX; ly=e.clientY;
-    canvas.classList.add('grabbing'); canvas.setPointerCapture(e.pointerId); anim=null;
+    panning = (e.button===1 || e.button===2 || e.shiftKey);
+    canvas.classList.add(panning ? 'panning' : 'grabbing');
+    canvas.setPointerCapture(e.pointerId); anim=null;
   });
+  canvas.addEventListener('contextmenu', e => e.preventDefault());   // right-drag = pan
   canvas.addEventListener('pointermove', e => {
     if (dragging){
       const dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
       if (Math.abs(dx)+Math.abs(dy) > 2) moved=true;
-      if (mapMode === 'tree'){ view.panx += dx; view.pany += dy; }
+      if (mapMode === 'tree' || panning){ view.panx += dx; view.pany += dy; }
       else { rot.y += dx*0.006; rot.x = clamp(rot.x + dy*0.006, -1.3, 1.3); }
       return;
     }
@@ -2222,11 +2227,12 @@ function escapeHtml(s){
     } else if (!tipEl.hidden){ tipEl.hidden = true; canvas.style.cursor = ''; }
   });
   canvas.addEventListener('pointerleave', () => { if (tipEl) tipEl.hidden = true; hoverGenre = null; });
-  const endDrag = e => { dragging=false; canvas.classList.remove('grabbing');
+  const endDrag = e => { dragging=false; canvas.classList.remove('grabbing','panning');
     try{ canvas.releasePointerCapture(e.pointerId); }catch(_){} };
   canvas.addEventListener('pointerup', e => {
+    const wasPanning = panning;
     endDrag(e);
-    if (!moved){                                   // treat as click -> hit test
+    if (!moved && !wasPanning){                     // treat as click -> hit test
       const r = canvas.getBoundingClientRect();
       const mx = e.clientX-r.left, my = e.clientY-r.top;
       let best=null, bz=-Infinity;
@@ -2459,10 +2465,37 @@ function escapeHtml(s){
   resetB && resetB.addEventListener('click', () => applyFilter(null));
 
   const spinEl = document.getElementById('map-spin');   // orbit-speed slider
-  const applySpin = () => { if (spinEl) spinSpeed = (spinEl.value / 100) * 0.006; };
+  const playBtn = document.getElementById('map-play');  // pause / play the orbit
+  let lastSpin = 0.0022;
   const syncSpin = () => { if (spinEl) spinEl.value = Math.round(spinSpeed / 0.006 * 100); };
+  function reflectPlay(){                                // button icon <- current state
+    if (!playBtn) return;
+    const on = spinSpeed > 0;
+    playBtn.classList.toggle('on', on);
+    playBtn.innerHTML = on ? '&#9208;' : '&#9205;';     // ⏸ pause when spinning · ▶ play when stopped
+    playBtn.title = (on ? 'pause' : 'play') + ' the orbit (Space)';
+  }
+  const applySpin = () => { if (spinEl){ spinSpeed = (spinEl.value / 100) * 0.006; reflectPlay(); } };
+  function toggleSpin(){
+    if (spinSpeed > 0){ lastSpin = spinSpeed; spinSpeed = 0; } else { spinSpeed = lastSpin || 0.0022; }
+    syncSpin(); reflectPlay();
+  }
   spinEl && spinEl.addEventListener('input', applySpin);
+  // blur after click so a following Space isn't caught by the focused button
+  // (native activation) *and* the document handler -> a double-toggle no-op.
+  playBtn && playBtn.addEventListener('click', () => { toggleSpin(); playBtn.blur(); });
   applySpin();
+
+  // navigation key legend: collapsible, state remembered
+  const keysEl = document.getElementById('map-keys');
+  const keysHead = document.getElementById('map-keys-head');
+  if (keysEl && keysHead){
+    try{ if (localStorage.getItem('vibeNavKeys') === 'off') keysEl.classList.add('collapsed'); }catch(_){}
+    keysHead.addEventListener('click', () => {
+      const off = keysEl.classList.toggle('collapsed');
+      try{ localStorage.setItem('vibeNavKeys', off ? 'off' : 'on'); }catch(_){}
+    });
+  }
 
   const filterEl = document.getElementById('map-filter');
   filterEl && filterEl.addEventListener('change', () => {
@@ -2480,23 +2513,23 @@ function escapeHtml(s){
     harmonic = !harmonic; harmonicBtn.classList.toggle('on', harmonic);
   });
 
-  // keyboard: +/- zoom, arrows rotate, space toggles spin, f fit, esc close
-  let lastSpin = 0.0022;
+  // keyboard nav: arrows orbit · Shift+arrows pan · +/- zoom · Space play/pause
+  //               · f fit · Esc close
   document.addEventListener('keydown', e => {
     if (!document.body.classList.contains('view-map')) return;
     const tag = e.target.tagName || '';
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
     const arrows = ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'];
+    const PAN = 45, ROT = 0.12;
     switch (e.key){
       case '+': case '=': view.zoom = clamp(view.zoom*1.15, 0.3, 60); anim=null; break;
       case '-': case '_': view.zoom = clamp(view.zoom/1.15, 0.3, 60); anim=null; break;
-      case 'ArrowLeft':  rot.y -= 0.12; break;
-      case 'ArrowRight': rot.y += 0.12; break;
-      case 'ArrowUp':    rot.x = clamp(rot.x-0.12, -1.3, 1.3); break;
-      case 'ArrowDown':  rot.x = clamp(rot.x+0.12, -1.3, 1.3); break;
-      case ' ':
-        if (spinSpeed > 0){ lastSpin = spinSpeed; spinSpeed = 0; } else { spinSpeed = lastSpin || 0.0022; }
-        syncSpin(); break;
+      // plain arrow orbits (rotate the cloud); Shift+arrow pans (move the camera)
+      case 'ArrowLeft':  if (e.shiftKey) view.panx += PAN; else rot.y -= ROT; break;
+      case 'ArrowRight': if (e.shiftKey) view.panx -= PAN; else rot.y += ROT; break;
+      case 'ArrowUp':    if (e.shiftKey) view.pany += PAN; else rot.x = clamp(rot.x-ROT, -1.3, 1.3); break;
+      case 'ArrowDown':  if (e.shiftKey) view.pany -= PAN; else rot.x = clamp(rot.x+ROT, -1.3, 1.3); break;
+      case ' ': toggleSpin(); break;
       case 'f': case 'F': applyFilter(null); break;
       case 'Escape': closePopup(); break;
       default: return;

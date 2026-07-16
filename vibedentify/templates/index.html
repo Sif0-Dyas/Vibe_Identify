@@ -94,6 +94,7 @@
     <select id="map-filter" class="map-filter" title="show only one genre (or just the flagged reads)">
       <option value="">all genres</option>
     </select>
+    <button id="map-play" class="map-toggle on" type="button" title="pause / play the orbit (Space)">&#9208;</button>
     <label class="map-spin-wrap" title="orbit speed (drag to 0 to stop)">&#8635;
       <input type="range" id="map-spin" min="0" max="100" value="37">
     </label>
@@ -104,6 +105,20 @@
   <div id="map-stage">
     <canvas id="map-canvas"></canvas>
     <div id="map-legend"></div>
+    <div id="map-keys">
+      <button id="map-keys-head" type="button" title="show / hide navigation controls">&#9000; nav</button>
+      <div id="map-keys-body">
+        <div class="mk-row"><span>drag</span><b>orbit</b></div>
+        <div class="mk-row"><span>right / &#8679;-drag</span><b>pan</b></div>
+        <div class="mk-row"><span>scroll</span><b>zoom</b></div>
+        <div class="mk-sep"></div>
+        <div class="mk-row"><span>arrows</span><b>orbit</b></div>
+        <div class="mk-row"><span>&#8679; arrows</span><b>pan</b></div>
+        <div class="mk-row"><span>+ / &minus;</span><b>zoom</b></div>
+        <div class="mk-row"><span>space</span><b>play / pause</b></div>
+        <div class="mk-row"><span>f / esc</span><b>fit / close</b></div>
+      </div>
+    </div>
     <div id="map-tip" hidden></div>
     <div id="map-pop" hidden></div>
   </div>
