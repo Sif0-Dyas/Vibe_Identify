@@ -1717,6 +1717,10 @@ function escapeHtml(s){
     // with >=4 members -- these fade in as you zoom in (semantic zoom / LOD).
     STYLE_CENTROIDS = {};
     if (mapMode !== 'galaxy'){
+      // label threshold scales with library size: a subgenre earns a label once
+      // it has ~1/90th of the library (min 2, max 12) -- so a small library
+      // surfaces subgenres eagerly, a large one stays uncluttered.
+      const labelMin = Math.max(2, Math.min(12, Math.round(NODES.length / 90)));
       const sacc = {};
       for (const n of NODES){
         const key = `${n.fam}||${n.style || n.fam}`;
@@ -1724,7 +1728,7 @@ function escapeHtml(s){
         const a = sacc[key]; a.x+=n.x3; a.y+=n.y3; a.z+=n.z3; a.c++;
       }
       for (const key in sacc){ const a = sacc[key];
-        if (a.c >= 4) STYLE_CENTROIDS[key] = { x:a.x/a.c, y:a.y/a.c, z:a.z/a.c, n:a.c, style:a.style }; }
+        if (a.c >= labelMin) STYLE_CENTROIDS[key] = { x:a.x/a.c, y:a.y/a.c, z:a.z/a.c, n:a.c, style:a.style }; }
     }
 
     buildLegend();
