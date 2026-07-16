@@ -321,6 +321,9 @@ def override_route(h):
         p = json.loads(payload)
         p["override"] = genre
         c.execute("UPDATE tracks SET payload=? WHERE hash=?", (json.dumps(p), h))
+    # INVARIANT: the training-copy file I/O below runs AFTER the _db_lock block
+    # closes -- `filepath` was read inside the lock, but shutil.copy2 must not be
+    # moved back inside it (never hold the DB lock across disk I/O).
     trained = False
     if filepath:
         safe = "".join(ch if ch.isalnum() or ch in " _-" else "_" for ch in genre).strip()

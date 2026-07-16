@@ -148,6 +148,14 @@ _Work in progress lands here, then gets stamped with a version + date on release
   Resolution chains PulseRoots → the editable sibling groups → the style itself
   (68% of electronic styles map directly; the sibling fallback covers most of the
   rest). No effect on recognition — it's a taxonomy/organization layer.
+- **Weighted vibe membership (Rocchio relevance feedback).** A vibe's centroid is
+  now a *preference-weighted* mean instead of a plain mean: each member track
+  carries a −1..+1 weight, set by a per-track slider and by per-song 👍/👎 on the
+  vibe matches. Positive weights pull the centroid toward a track and negative
+  weights push it away, so you can steer a vibe by example; with every weight = 1
+  it reduces exactly to the old plain-mean behaviour. Adds `POST /vibes/weight`,
+  `POST /vibes/remove`, and `GET /vibes/<id>/members`, and migrates existing DBs
+  by adding a `weight REAL DEFAULT 1.0` column to `vibe_tracks`.
 
 ### Changed
 - **Reworked the layout to a single full-window drop area.** Replaced the
