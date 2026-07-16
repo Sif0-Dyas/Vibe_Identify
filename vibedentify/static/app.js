@@ -1640,7 +1640,8 @@ function escapeHtml(s){
 
   let NODES = [], EDGES = [], FAMS = [], COUNTS = {}, CENTROIDS = {}, STYLE_CENTROIDS = {};
   const byHash = new Map();
-  let mapMode = 'regions';                 // 'regions' | 'galaxy'
+  let mapMode = 'regions';                 // 'regions' | 'galaxy' | 'tree'
+  let TREE = null;                         // {nodes, links, rows} for tree mode
   let selHash = null;
   let simCache = [];                       // last popup's /similar result
 
@@ -1713,6 +1714,13 @@ function escapeHtml(s){
     for (const n of NODES) COUNTS[n.fam] = (COUNTS[n.fam]||0)+1;
     FAMS = Object.keys(COUNTS).sort((a,b)=>COUNTS[b]-COUNTS[a]);
     const NC = (NODES.find(n=>n.e)||{}).e?.length || 0;
+
+    if (mapMode === 'tree'){
+      buildTree();
+      buildLegend();
+      countMap.textContent = `${NODES.length} tracks · ${FAMS.length} genres · tree`;
+      return;
+    }
 
     if (mapMode === 'galaxy'){
       // position == first 3 PCA axes -> a pure 3-D sonic galaxy
@@ -1841,6 +1849,85 @@ function escapeHtml(s){
     }
   }
 
+  /* ---- flat left-to-right hierarchy tree (family -> subgenre -> track) --- */
+  // A genre taxonomy tree: families -> subgenres, sized by track count. (A
+  // per-track tree of a 1000+ track library is unreadable, so this mirrors
+  // pulse.roots -- the structure, not every song.)
+  const TCOL = 0.42;                     // column spacing (* min(W,H))
+  function buildTree(){
+    const groups = {};
+    for (const n of NODES){
+      const fam = n.fam, sub = n.style || fam;
+      (groups[fam] ||= { subs:{}, count:0 });
+      groups[fam].subs[sub] = (groups[fam].subs[sub]||0) + 1;
+      groups[fam].count++;
+    }
+    const famNames = Object.keys(groups).sort((a,b)=>groups[b].count-groups[a].count);
+    const nodes = [], links = [];
+    let row = 0;
+    for (const fam of famNames){
+      const g = groups[fam];
+      const subNames = Object.keys(g.subs).sort((a,b)=>g.subs[b]-g.subs[a]);
+      const subRows = [];
+      for (const sub of subNames){ const y = row++; subRows.push(y);
+        nodes.push({ kind:'sub', label:sub, fam, x:1, y, count:g.subs[sub] }); }
+      const fy = subRows.reduce((a,b)=>a+b,0)/subRows.length;
+      nodes.push({ kind:'fam', label:fam, fam, x:0, y:fy, count:g.count });
+      for (const y of subRows) links.push([0, fy, 1, y, fam]);
+      row += 0.7;                        // gap between families
+    }
+    const off = row / 2;
+    for (const nd of nodes) nd.y -= off;
+    for (const l of links){ l[1]-=off; l[3]-=off; }
+    TREE = { nodes, links, rows: row, rowPx: 0 };
+  }
+  function fitTree(){
+    if (!TREE) return;
+    const rows = TREE.rows;
+    TREE.rowPx = Math.max(15, (H - 130) / Math.max(1, rows));   // readable row height
+    view.zoom = 1; view.panx = 0;
+    // scroll so the top of the tree sits near the viewport top
+    view.pany = 96 - H/2 + (rows/2) * TREE.rowPx;
+  }
+  function renderTree(){
+    ctx.clearRect(0,0,W,H); ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+    if (!TREE) return;
+    if (!TREE.rowPx) fitTree();
+    const M = Math.min(W,H);
+    const cxp = W/2 + view.panx, cyp = H/2 + view.pany;
+    const SX = x => cxp + (x - 0.55) * TCOL * M * view.zoom;   // fam left, sub right
+    const SY = y => cyp + y * TREE.rowPx * view.zoom;
+    const show = fam => (!filterFam || fam === filterFam);
+    // links
+    ctx.lineWidth = 1;
+    for (const l of TREE.links){
+      if (!show(l[4])) continue;
+      const x1=SX(l[0]), y1=SY(l[1]), x2=SX(l[2]), y2=SY(l[3]), mx=(x1+x2)/2;
+      ctx.strokeStyle = `hsla(${hueOf(l[4])} 45% 55% / 0.35)`;
+      ctx.beginPath(); ctx.moveTo(x1,y1); ctx.bezierCurveTo(mx,y1,mx,y2,x2,y2); ctx.stroke();
+    }
+    // nodes + labels
+    proj.clear();
+    ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+    for (const nd of TREE.nodes){
+      if (!show(nd.fam)) continue;
+      const isFam = nd.kind === 'fam';
+      const sx = SX(nd.x), sy = SY(nd.y);
+      const r = isFam ? 6 + Math.min(11, Math.sqrt(nd.count)) : 3.5 + Math.min(7, Math.sqrt(nd.count)*0.8);
+      ctx.beginPath(); ctx.arc(sx, sy, r, 0, 6.2832);
+      ctx.fillStyle = isFam ? famCss(nd.fam) : `hsl(${hueOf(nd.fam)} 48% 56%)`; ctx.fill();
+      // family labels to the left, subgenre labels to the right
+      ctx.textAlign = isFam ? 'right' : 'left';
+      const lx = isFam ? sx - r - 6 : sx + r + 6;
+      const label = `${nd.label} ${nd.count}`;
+      ctx.font = isFam ? '800 15px Syne, sans-serif' : "500 11px 'JetBrains Mono', monospace";
+      ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(0,0,0,0.92)';
+      ctx.strokeText(label, lx, sy);
+      ctx.fillStyle = isFam ? '#e9eef7' : '#aeb8ca';
+      ctx.fillText(label, lx, sy);
+    }
+  }
+
   /* ---- canvas sizing ----------------------------------------------- */
   function resize(){
     DPR = Math.min(2, window.devicePixelRatio || 1);
@@ -1854,7 +1941,6 @@ function escapeHtml(s){
   function frame(now){
     if (!running) return;
     const t = now/1000;
-    if (spinSpeed > 0 && !anim && !dragging) rot.y += spinSpeed;   // idle orbit
     if (anim){
       const p = Math.min(1,(now-anim.t0)/anim.dur), e = p<.5?4*p*p*p:1-Math.pow(-2*p+2,3)/2;
       rot.x = anim.f.rx + (anim.t.rx-anim.f.rx)*e;
@@ -1864,6 +1950,8 @@ function escapeHtml(s){
       view.pany = anim.f.py + (anim.t.py-anim.f.py)*e;
       if (p>=1) anim = null;
     }
+    if (mapMode === 'tree'){ renderTree(); rafId = requestAnimationFrame(frame); return; }
+    if (spinSpeed > 0 && !anim && !dragging) rot.y += spinSpeed;   // idle orbit
     // orbit pivots around the selected track (eased); origin when nothing selected
     const sel = selHash ? byHash.get(selHash) : null;
     pivot.x += ((sel?sel.x3:0) - pivot.x) * 0.12;
@@ -2011,7 +2099,8 @@ function escapeHtml(s){
     if (dragging){
       const dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
       if (Math.abs(dx)+Math.abs(dy) > 2) moved=true;
-      rot.y += dx*0.006; rot.x = clamp(rot.x + dy*0.006, -1.3, 1.3);
+      if (mapMode === 'tree'){ view.panx += dx; view.pany += dy; }
+      else { rot.y += dx*0.006; rot.x = clamp(rot.x + dy*0.006, -1.3, 1.3); }
       return;
     }
     // hover tooltip: nearest node under the cursor
@@ -2064,11 +2153,13 @@ function escapeHtml(s){
   function selectNode(hash){
     const n = byHash.get(hash); if (!n) return;
     selHash = hash;
-    // the pivot eases to this track (frame loop), so it becomes the orbit centre.
-    // keep the rotation, just zoom in a bit and recentre the view.
-    anim = { f:{rx:rot.x,ry:rot.y,z:view.zoom,px:view.panx,py:view.pany},
-             t:{rx:rot.x, ry:rot.y, z:Math.max(1.9,view.zoom), px:0, py:0},
-             t0:performance.now(), dur:600 };
+    if (mapMode !== 'tree'){
+      // the pivot eases to this track (frame loop), so it becomes the orbit
+      // centre. keep the rotation, just zoom in a bit and recentre the view.
+      anim = { f:{rx:rot.x,ry:rot.y,z:view.zoom,px:view.panx,py:view.pany},
+               t:{rx:rot.x, ry:rot.y, z:Math.max(1.9,view.zoom), px:0, py:0},
+               t0:performance.now(), dur:600 };
+    }
     openPopup(n);
   }
 
@@ -2211,7 +2302,8 @@ function escapeHtml(s){
 
   function resetView(){
     closePopup();
-    view.zoom=1; view.panx=0; view.pany=0; rot.x=-0.15; anim=null;
+    view.panx=0; view.pany=0; rot.x=-0.15; anim=null;
+    if (mapMode === 'tree') fitTree(); else view.zoom = 1;
   }
   function focusFamily(fam){          // fly to a genre's centroid
     const c = CENTROIDS[fam]; if (!c) return;
@@ -2305,7 +2397,7 @@ function escapeHtml(s){
     document.getElementById('map-view').hidden = !on;
     if (on){
       ensureBuilt().then(() => {
-        resize(); startLoop();
+        resize(); if (mapMode === 'tree') fitTree(); startLoop();
         const m = /^#map=(.+)$/.exec(deepHash);
         if (m && byHash.has(m[1])) selectNode(m[1]);
       });
