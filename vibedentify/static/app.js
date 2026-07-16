@@ -2222,16 +2222,52 @@ function escapeHtml(s){
       <div class="pop-h">similar tracks</div>
       <div class="pop-sim" id="pop-sim"><span class="pop-bar">…</span></div>
       <div class="pop-omit-row">
-        <button class="pop-omit" title="delete this track's analysis (audio file untouched)">✕ omit from library</button>
+        <button class="pop-override" title="set the genre yourself (persists + saved for training)">✎ override</button>
+        <button class="pop-omit" title="delete this track's analysis (audio file untouched)">✕ omit</button>
+      </div>
+      <div class="pop-ovr" hidden>
+        <input class="pop-ovr-in" type="text" placeholder="genre…" autocomplete="off" spellcheck="false">
+        <button class="pop-ovr-save">save</button>
+        <button class="pop-ovr-cancel" title="cancel">✕</button>
       </div>`;
     popEl.hidden = false;
     popEl.querySelector('.pop-x').onclick = closePopup;
     popEl.querySelector('.pop-omit').onclick = () => omitTrack(n);
+    const ovrRow = popEl.querySelector('.pop-ovr'), omitRow = popEl.querySelector('.pop-omit-row');
+    const ovrIn = popEl.querySelector('.pop-ovr-in');
+    const closeOvr = () => { ovrRow.hidden = true; omitRow.hidden = false; };
+    popEl.querySelector('.pop-override').onclick = () => {
+      omitRow.hidden = true; ovrRow.hidden = false;
+      ovrIn.value = n.suggest || n.style || '';   // prefill with the flag's suggestion
+      ovrIn.focus(); ovrIn.select();
+    };
+    popEl.querySelector('.pop-ovr-cancel').onclick = closeOvr;
+    popEl.querySelector('.pop-ovr-save').onclick = () => overrideTrack(n, ovrIn.value);
+    ovrIn.addEventListener('keydown', e => {
+      if (e.key === 'Enter') overrideTrack(n, ovrIn.value);
+      else if (e.key === 'Escape') closeOvr();
+    });
     try{
       simCache = await fetch(`/similar/${n.hash}?k=12`).then(r=>r.ok?r.json():[]);
     }catch(_){ simCache = []; }
     renderPick();
     renderSimilar(simCache);
+  }
+
+  // override: persist a manual genre; the track moves to its new cluster
+  async function overrideTrack(n, genre){
+    genre = (genre || '').trim(); if (!genre) return;
+    try{
+      await fetch(`/override/${n.hash}`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ genre }) });
+    }catch(_){ /* still relabel locally */ }
+    n.style = genre;
+    n.fam = familyOf(genre) || 'Other';
+    n.hue = hueOf(n.fam);
+    n.flag = false; n.suggest = null;
+    closePopup();
+    if (NODES.length) layout();          // re-cluster with the new genre
   }
 
   // omit/forget: delete this track's analysis from the DB and drop it off the map

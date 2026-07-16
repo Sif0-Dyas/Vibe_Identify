@@ -302,6 +302,39 @@ def forget_route(h):
     return jsonify({"ok": True, "deleted": deleted})
 
 
+@bp.post("/override/<h>")
+def override_route(h):
+    """Manually set a track's genre. Persists into the cached analysis (so the
+    map, list and audit reflect it and it survives a reload), and files the audio
+    under ~/genre_training/<genre>/ when a server-side file is available."""
+    import shutil
+
+    data = request.get_json(silent=True) or {}
+    genre = (data.get("genre") or "").strip()
+    if not genre:
+        return jsonify({"error": "genre required"}), 400
+    with _db_lock, closing(db()) as conn, conn as c:
+        row = c.execute("SELECT filepath, payload FROM tracks WHERE hash=?", (h,)).fetchone()
+        if not row:
+            return jsonify({"error": "track not in database"}), 404
+        filepath, payload = row
+        p = json.loads(payload)
+        p["override"] = genre
+        c.execute("UPDATE tracks SET payload=? WHERE hash=?", (json.dumps(p), h))
+    trained = False
+    if filepath:
+        safe = "".join(ch if ch.isalnum() or ch in " _-" else "_" for ch in genre).strip()
+        src = Path(filepath)
+        if safe and src.is_file():
+            dest_dir = Path.home() / "genre_training" / safe
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / src.name
+            if not dest.exists():
+                shutil.copy2(src, dest)
+            trained = True
+    return jsonify({"ok": True, "genre": genre, "trained": trained})
+
+
 # ----------------------------------------------------------------------------
 # Audio preview: stream a previously-analyzed track for in-app playback
 # ----------------------------------------------------------------------------
@@ -572,7 +605,10 @@ def _artist_of(title, filename):
 
 
 def _dominant_style(payload):
-    """Salience winner (v2 identity), falling back to the top flat style."""
+    """Salience winner (v2 identity), falling back to the top flat style.
+    A manual override (set via POST /override) wins outright."""
+    if payload.get("override"):
+        return payload["override"], 1.0
     sal = payload.get("salience") or []
     if sal:
         return sal[0].get("style"), round(float(sal[0].get("score", 0)), 4)

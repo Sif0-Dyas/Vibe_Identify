@@ -994,13 +994,29 @@ body.view-guide .lensbar{ display:none; }
 .pop-pick .pk-sub .pct{ color:var(--accent-a); }
 
 /* omit / forget a track from the map popup */
-.pop-omit-row{ margin-top:12px; padding-top:10px; border-top:1px solid var(--line); }
-.pop-omit{
-  width:100%; background:none; border:1px solid var(--line); border-radius:7px;
+.pop-omit-row{ margin-top:12px; padding-top:10px; border-top:1px solid var(--line); display:flex; gap:6px; }
+.pop-omit-row[hidden]{ display:none; }
+.pop-override, .pop-omit{
+  flex:1; background:none; border:1px solid var(--line); border-radius:7px;
   color:var(--dim); font-family:'JetBrains Mono',monospace; font-size:10.5px;
   padding:7px; cursor:pointer;
 }
+.pop-override:hover{ color:var(--text); border-color:var(--accent-a); background:rgba(86,180,233,.10); }
 .pop-omit:hover{ color:var(--err); border-color:var(--err); background:rgba(229,86,79,.10); }
+/* inline override editor */
+.pop-ovr{ margin-top:12px; padding-top:10px; border-top:1px solid var(--line); display:flex; gap:6px; }
+.pop-ovr[hidden]{ display:none; }
+.pop-ovr-in{
+  flex:1; min-width:0; background:var(--panel-2); border:1px solid var(--line); border-radius:6px;
+  color:var(--text); font-family:'JetBrains Mono',monospace; font-size:11px; padding:6px 9px;
+}
+.pop-ovr-in:focus{ outline:none; border-color:var(--accent-a); }
+.pop-ovr-save, .pop-ovr-cancel{
+  background:var(--panel-2); border:1px solid var(--line); border-radius:6px; color:var(--text);
+  font-family:'JetBrains Mono',monospace; font-size:10.5px; padding:6px 10px; cursor:pointer;
+}
+.pop-ovr-save:hover{ border-color:var(--accent-a); color:var(--accent-a); }
+.pop-ovr-cancel:hover{ border-color:var(--dimmer); }
 
 /* likely-misread flag */
 .pop-flag{

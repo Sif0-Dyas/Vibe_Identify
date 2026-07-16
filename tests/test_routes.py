@@ -99,6 +99,18 @@ def test_forget_deletes_track(client):
     assert client.post(f"/forget/{h}").get_json()["deleted"] == 0
 
 
+def test_override_sets_genre(client):
+    data = {"file": (io.BytesIO(_tiny_wav_bytes()), "ov.wav")}
+    h = client.post("/analyze", data=data, content_type="multipart/form-data").get_json()["hash"]
+    r = client.post(f"/override/{h}", json={"genre": "Riddim"})
+    assert r.status_code == 200
+    assert r.get_json()["genre"] == "Riddim"
+    # the override wins as the dominant style -> shows on the map
+    node = next(n for n in client.get("/map").get_json()["nodes"] if n["hash"] == h)
+    assert node["style"] == "Riddim"
+    assert client.post(f"/override/{h}", json={}).status_code == 400  # empty rejected
+
+
 def test_guide_route_serves_markdown(client):
     r = client.get("/guide")
     assert r.status_code == 200

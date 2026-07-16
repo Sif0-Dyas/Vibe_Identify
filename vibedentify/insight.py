@@ -44,7 +44,9 @@ def family_of(style):
 
 
 def dominant(payload):
-    """(top_style, confidence) from a stored payload -- salience first."""
+    """(top_style, confidence) from a stored payload -- manual override, then salience."""
+    if payload.get("override"):
+        return payload["override"], 1.0
     sal = payload.get("salience") or []
     if sal:
         return sal[0].get("style"), float(sal[0].get("score", 0))
