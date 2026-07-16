@@ -69,6 +69,13 @@ _Work in progress lands here, then gets stamped with a version + date on release
   Music); family labels fade back and cyan subgenre labels fade in as you zoom
   (level-of-detail). The subgenre-label threshold scales with library size, and
   the genre labels are brighter/more legible.
+- **Override now persists from the List too.** The List-view **✎ override** used
+  to only file a training copy and relabel the on-screen chip — re-dropping the
+  track showed the model's original read again. It now goes through the same
+  `POST /override/<hash>` as the Map popup, writing `payload["override"]` into
+  the cached analysis so the manual genre sticks everywhere (List, Map, exports,
+  audit) and survives a reload. Dropped files (no server-side path) still upload
+  the file so the `~/genre_training/<genre>/` copy is saved.
 - **Map: label readability pass.** Family labels no longer pile on top of each
   other — they relax apart in 2-D (box separation) and connect back to their
   cluster with a colour-coded leader line. In **regions** the families sit

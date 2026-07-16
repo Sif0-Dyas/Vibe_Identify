@@ -219,11 +219,16 @@ always agree.
 Per-row actions (List view), plus library-wide tools in the footer:
 
 - **✎ override** — set the genre yourself (e.g. your own *Riddim* / *Tearout*).
-  The track's audio is **copied** to `~/genre_training/<genre>/` to build a
-  labelled dataset for training a custom head later. *Note:* an override
-  relabels the displayed read and files the track for training; it does **not**
-  rewrite the cached analysis, so re-dropping the track shows the model's
-  original read again.
+  An override does two things: (1) it **persists** into the track's cached
+  analysis, so it becomes the track's dominant genre everywhere — the List, the
+  Map, exports, and the misread audit — and **survives a reload**; re-dropping
+  the same track shows your override, not the model's original read. (2) the
+  track's audio is **copied** to `~/genre_training/<genre>/` to build a labelled
+  dataset for training a custom head later (for a dropped file with no
+  server-side path, the file you dropped is uploaded for that copy). The **same
+  ✎ override** is available in the **Map popup** and behaves identically — both
+  routes go through `POST /override/<hash>`, so an override set in either place
+  sticks in the other. To revert, **omit** the track and re-scan it.
 - **✕ omit** — delete a track's analysis entirely (a bogus read). Removes it
   from the cache, the Map, and any tag/vibe membership. **Your audio file is not
   touched** — re-scanning re-analyzes it fresh. Also available in the Map popup.
@@ -301,7 +306,8 @@ neighbours; colour = genre family.
 Selecting a track shows its family, metadata, "also reads as", **similar
 artists** and **similar tracks** (from the embeddings), and a **🎲 "a match for
 you"** block that surfaces a random one of its closest matches (with a re-roll).
-Flagged tracks show the **⚠ misread note**, and there's an **omit** button.
+Flagged tracks show the **⚠ misread note**. There's an **✎ override** button
+(persists just like the List-view override — see §7) and an **omit** button.
 
 ### Deep links
 

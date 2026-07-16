@@ -711,7 +711,7 @@ function finishRow(row, data, file){
   const overrideBtn = document.createElement('button');
   overrideBtn.className = 'override-btn';
   overrideBtn.textContent = '✎ override';
-  overrideBtn.title = 'set the genre yourself + save as training data';
+  overrideBtn.title = 'set the genre yourself — persists across reloads + saved as training data';
   row.children[2].appendChild(overrideBtn);
 
   /* ---- omit: delete this analysis entirely (e.g. a bogus read) ---- */
@@ -800,29 +800,35 @@ function finishRow(row, data, file){
     const res = getResult();
     if (res) res.overrideGenre = genre;
 
-    // 2. save to ~/genre_training/<genre>/
+    // 2. persist the override to the DB (survives reload, same as the map's
+    //    ✎ override) + save a training copy to ~/genre_training/<genre>/.
     oSave.disabled = true; oSave.textContent = 'saving…';
     try {
-      const fd = new FormData();
-      fd.append('genre', genre);
       const res2 = getResult();
-      if (res2 && res2.filepath){
-        // batch mode: send server-side path
-        fd.append('filepath', res2.filepath);
-        const r = await fetch('/save_training', {method:'POST', body:fd});
+      const hash = res2 && res2.hash;
+      let trained = false;
+      if (hash){
+        // /override sets payload["override"] so the dominant style sticks; it
+        // also files the audio for training when the DB has a server-side path.
+        const r = await fetch(`/override/${hash}`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({genre}),
+        });
         const j = await r.json();
-        if (!r.ok) throw new Error(j.error);
-        trainBadge.textContent = `✓ saved to ~/genre_training/${escapeHtml(genre)}/`;
-      } else if (file){
-        // dropped file: re-upload the original file object
-        fd.append('file', file);
-        const r = await fetch('/save_training', {method:'POST', body:fd});
-        const j = await r.json();
-        if (!r.ok) throw new Error(j.error);
-        trainBadge.textContent = `✓ saved to ~/genre_training/${escapeHtml(genre)}/`;
-      } else {
-        trainBadge.textContent = '⚠ no file to save (batch without filepath)';
+        if (!r.ok) throw new Error(j.error || 'override failed');
+        trained = !!j.trained;
       }
+      // dropped files have no server-side path -> re-upload the file so the
+      // training copy still gets saved (the override above already persisted).
+      if (!trained && file){
+        const fd = new FormData();
+        fd.append('genre', genre); fd.append('file', file);
+        const r = await fetch('/save_training', {method:'POST', body:fd});
+        if (r.ok) trained = true;
+      }
+      trainBadge.textContent = trained
+        ? `✓ saved · training copy in ~/genre_training/${escapeHtml(genre)}/`
+        : '✓ override saved (persists across reloads)';
       trainBadge.classList.add('show');
     } catch(err){
       trainBadge.textContent = `⚠ save failed: ${err.message}`;
