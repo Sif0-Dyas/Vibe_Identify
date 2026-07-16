@@ -712,6 +712,18 @@ def index():
     return render_template("index.html")
 
 
+@bp.get("/guide")
+def guide_route():
+    """Serve the user guide (docs/USAGE.md) as raw markdown for the in-app tab."""
+    path = Path(__file__).resolve().parent.parent / "docs" / "USAGE.md"
+    try:
+        return Response(path.read_text(encoding="utf-8"), mimetype="text/markdown")
+    except OSError:
+        return Response(
+            "# Guide unavailable\n\nCould not read docs/USAGE.md.", mimetype="text/markdown"
+        )
+
+
 @bp.post("/batch")
 def batch_route():
     """Scan a server-side folder path and analyze all audio files in parallel.

@@ -2293,8 +2293,11 @@ function escapeHtml(s){
   }
   function switchTo(viewName){
     tabsEl.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.view===viewName));
+    document.body.classList.toggle('view-guide', viewName === 'guide');
+    if (viewName === 'guide' && window.vibeLoadGuide) window.vibeLoadGuide();
     showMap(viewName === 'map');
-    try{ history.replaceState(null,'', viewName==='map' ? '#map' : '#'); }catch(_){}
+    const hash = viewName==='map' ? '#map' : (viewName==='guide' ? '#guide' : '#');
+    try{ history.replaceState(null,'', hash); }catch(_){}
   }
   function showMap(on){
     const deepHash = location.hash;
@@ -2317,6 +2320,7 @@ function escapeHtml(s){
   }
   if (location.hash === '#map' || location.hash.startsWith('#map=') || location.hash === '#galaxy')
     switchTo('map');
+  else if (location.hash === '#guide') switchTo('guide');
 
   let rz;
   window.addEventListener('resize', () => {
@@ -2377,4 +2381,83 @@ function escapeHtml(s){
   });
 
   if (location.hash === '#review') btn.click();   // deep link: open the audit
+})();
+
+/* ===================================================================
+   Guide tab: fetch docs/USAGE.md (via /guide) and render it in-app with a
+   small dependency-free Markdown converter (headings, lists w/ nesting,
+   code, blockquotes, hr, bold, inline code, links).
+   =================================================================== */
+(() => {
+  const body = document.getElementById('guide-body');
+  if (!body) return;
+  let loaded = false;
+
+  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const inline = s => esc(s)
+    .replace(/`([^`]+)`/g, (m,c)=>`<code>${c}</code>`)
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m,t,u)=>{
+      const ext = /^https?:/.test(u);
+      return `<a href="${esc(u)}"${ext?' target="_blank" rel="noopener"':''}>${t}</a>`;
+    });
+  const slug = s => s.toLowerCase().replace(/[^\w\s-]/g,'').trim().replace(/\s+/g,'-');
+
+  function mdToHtml(md){
+    const lines = md.replace(/\r/g,'').split('\n');
+    const out = [];
+    const stack = [];                 // open lists: {type, indent}
+    let inCode = false, code = [], quote = [];
+    const closeLists = (toIndent) => {
+      while (stack.length && stack[stack.length-1].indent >= toIndent)
+        out.push(stack.pop().type === 'ol' ? '</ol>' : '</ul>');
+    };
+    const closeAll = () => closeLists(-1);
+    const flushQuote = () => { if (quote.length){ out.push(`<blockquote>${quote.map(inline).join('<br>')}</blockquote>`); quote=[]; } };
+    for (const raw of lines){
+      if (/^\s*```/.test(raw)){
+        if (inCode){ out.push(`<pre><code>${esc(code.join('\n'))}</code></pre>`); code=[]; inCode=false; }
+        else { flushQuote(); closeAll(); inCode=true; }
+        continue;
+      }
+      if (inCode){ code.push(raw); continue; }
+      const line = raw.replace(/\s+$/,'');
+      let m;
+      if ((m = /^>\s?(.*)$/.exec(line))){ closeAll(); quote.push(m[1]); continue; }
+      flushQuote();
+      if (!line.trim()) continue;                                   // blank
+      if ((m = /^(#{1,4})\s+(.*)$/.exec(line))){ closeAll(); const n=m[1].length; out.push(`<h${n} id="${slug(m[2])}">${inline(m[2])}</h${n}>`); continue; }
+      if (/^-{3,}$/.test(line.trim())){ closeAll(); out.push('<hr>'); continue; }
+      const li = /^(\s*)([-*]|\d+\.)\s+(.*)$/.exec(line);
+      if (li){
+        const indent = li[1].length, type = /\d/.test(li[2]) ? 'ol' : 'ul';
+        closeLists(indent + 1);
+        const top = stack[stack.length-1];
+        if (!top || top.indent < indent){ out.push(type==='ol'?'<ol>':'<ul>'); stack.push({type, indent}); }
+        out.push(`<li>${inline(li[3])}</li>`);
+        continue;
+      }
+      closeAll(); out.push(`<p>${inline(line.trim())}</p>`);
+    }
+    flushQuote(); closeAll();
+    if (inCode) out.push(`<pre><code>${esc(code.join('\n'))}</code></pre>`);
+    return out.join('\n');
+  }
+
+  window.vibeLoadGuide = async () => {
+    if (loaded) return;
+    loaded = true;
+    try{
+      const md = await fetch('/guide').then(r => r.text());
+      body.innerHTML = mdToHtml(md);
+    }catch(_){
+      body.innerHTML = '<p>Could not load the guide.</p>';
+      loaded = false;
+    }
+  };
+
+  // deep link (#guide) switches the view before this module defines the loader,
+  // so kick off the load here too.
+  if (location.hash === '#guide') window.vibeLoadGuide();
 })();

@@ -99,6 +99,12 @@ def test_forget_deletes_track(client):
     assert client.post(f"/forget/{h}").get_json()["deleted"] == 0
 
 
+def test_guide_route_serves_markdown(client):
+    r = client.get("/guide")
+    assert r.status_code == 200
+    assert b"User Guide" in r.data
+
+
 def test_audit_route_returns_list(client):
     r = client.get("/audit")
     assert r.status_code == 200
