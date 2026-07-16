@@ -1849,11 +1849,10 @@ function escapeHtml(s){
     }
   }
 
-  /* ---- flat left-to-right hierarchy tree (family -> subgenre -> track) --- */
-  // A genre taxonomy tree: families -> subgenres, sized by track count. (A
-  // per-track tree of a 1000+ track library is unreadable, so this mirrors
-  // pulse.roots -- the structure, not every song.)
-  const TCOL = 0.42;                     // column spacing (* min(W,H))
+  /* ---- organic left-to-right genre tree (root -> families -> subgenres) ---
+     A taxonomy of the library (à la pulse.roots / ishkur). Branch LENGTH grows
+     with track count -> big branches reach farther before fanning out, so the
+     ends aren't a straight column. */
   function buildTree(){
     const groups = {};
     for (const n of NODES){
@@ -1863,47 +1862,62 @@ function escapeHtml(s){
       groups[fam].count++;
     }
     const famNames = Object.keys(groups).sort((a,b)=>groups[b].count-groups[a].count);
+    const maxFam = Math.max(1, ...famNames.map(f=>groups[f].count));
+    let maxSub = 1;
+    for (const f of famNames) for (const s in groups[f].subs) maxSub = Math.max(maxSub, groups[f].subs[s]);
+    const famLen = c => 0.7 + 1.9 * Math.sqrt(c / maxFam);   // root -> family reach
+    const subLen = c => 0.5 + 1.8 * Math.sqrt(c / maxSub);   // family -> subgenre reach
+
     const nodes = [], links = [];
-    let row = 0;
+    let row = 0, maxX = 0;
     for (const fam of famNames){
       const g = groups[fam];
       const subNames = Object.keys(g.subs).sort((a,b)=>g.subs[b]-g.subs[a]);
-      const subRows = [];
-      for (const sub of subNames){ const y = row++; subRows.push(y);
-        nodes.push({ kind:'sub', label:sub, fam, x:1, y, count:g.subs[sub] }); }
-      const fy = subRows.reduce((a,b)=>a+b,0)/subRows.length;
-      nodes.push({ kind:'fam', label:fam, fam, x:0, y:fy, count:g.count });
-      for (const y of subRows) links.push([0, fy, 1, y, fam]);
-      row += 0.7;                        // gap between families
+      const famX = famLen(g.count);
+      const subInfo = [];
+      for (const sub of subNames){
+        const y = row++, sx = famX + subLen(g.subs[sub]);
+        maxX = Math.max(maxX, sx);
+        subInfo.push({ sub, y, sx, count:g.subs[sub] });
+      }
+      const fy = subInfo.reduce((a,b)=>a+b.y,0) / subInfo.length;
+      nodes.push({ kind:'fam', label:fam, fam, x:famX, y:fy, count:g.count });
+      links.push([0, 0, famX, fy, fam]);                 // root -> family (root y = centre)
+      for (const si of subInfo){
+        nodes.push({ kind:'sub', label:si.sub, fam, x:si.sx, y:si.y, count:si.count });
+        links.push([famX, fy, si.sx, si.y, fam]);        // family -> subgenre
+      }
+      row += 0.9;                                        // gap between families
     }
-    const off = row / 2;
+    const off = row / 2;                                 // centre vertically
     for (const nd of nodes) nd.y -= off;
-    for (const l of links){ l[1]-=off; l[3]-=off; }
-    TREE = { nodes, links, rows: row, rowPx: 0 };
+    for (const l of links){ l[1] -= (l[0]===0 ? 0 : off); l[3] -= off; }
+    nodes.push({ kind:'root', fam:null, x:0, y:0, count:NODES.length });
+    TREE = { nodes, links, rows: row, maxX, rowPx: 0 };
   }
   function fitTree(){
     if (!TREE) return;
     const rows = TREE.rows;
     TREE.rowPx = Math.max(15, (H - 130) / Math.max(1, rows));   // readable row height
     view.zoom = 1; view.panx = 0;
-    // scroll so the top of the tree sits near the viewport top
-    view.pany = 96 - H/2 + (rows/2) * TREE.rowPx;
+    view.pany = 96 - H/2 + (rows/2) * TREE.rowPx;               // start at the top
   }
   function renderTree(){
     ctx.clearRect(0,0,W,H); ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
     if (!TREE) return;
     if (!TREE.rowPx) fitTree();
-    const M = Math.min(W,H);
-    const cxp = W/2 + view.panx, cyp = H/2 + view.pany;
-    const SX = x => cxp + (x - 0.55) * TCOL * M * view.zoom;   // fam left, sub right
-    const SY = y => cyp + y * TREE.rowPx * view.zoom;
-    const show = fam => (!filterFam || fam === filterFam);
-    // links
-    ctx.lineWidth = 1;
+    const cx = W/2 + view.panx, cy = H/2 + view.pany;
+    const spanX = TREE.maxX || 1;
+    const SPX = (W * 0.66) / spanX * view.zoom;
+    const SX = wx => cx + (wx - spanX/2) * SPX;
+    const SY = wy => cy + wy * TREE.rowPx * view.zoom;
+    const show = fam => (!filterFam || !fam || fam === filterFam);
+    // links (curved, coloured by family)
+    ctx.lineWidth = 1.3;
     for (const l of TREE.links){
       if (!show(l[4])) continue;
       const x1=SX(l[0]), y1=SY(l[1]), x2=SX(l[2]), y2=SY(l[3]), mx=(x1+x2)/2;
-      ctx.strokeStyle = `hsla(${hueOf(l[4])} 45% 55% / 0.35)`;
+      ctx.strokeStyle = `hsla(${hueOf(l[4])} 48% 55% / 0.4)`;
       ctx.beginPath(); ctx.moveTo(x1,y1); ctx.bezierCurveTo(mx,y1,mx,y2,x2,y2); ctx.stroke();
     }
     // nodes + labels
@@ -1911,13 +1925,17 @@ function escapeHtml(s){
     ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
     for (const nd of TREE.nodes){
       if (!show(nd.fam)) continue;
-      const isFam = nd.kind === 'fam';
       const sx = SX(nd.x), sy = SY(nd.y);
-      const r = isFam ? 6 + Math.min(11, Math.sqrt(nd.count)) : 3.5 + Math.min(7, Math.sqrt(nd.count)*0.8);
+      if (nd.kind === 'root'){
+        ctx.beginPath(); ctx.arc(sx, sy, 5, 0, 6.2832);
+        ctx.fillStyle = 'rgba(200,210,225,0.85)'; ctx.fill();
+        continue;
+      }
+      const isFam = nd.kind === 'fam';
+      const r = isFam ? 6 + Math.min(12, Math.sqrt(nd.count)) : 3.5 + Math.min(8, Math.sqrt(nd.count)*0.9);
       ctx.beginPath(); ctx.arc(sx, sy, r, 0, 6.2832);
       ctx.fillStyle = isFam ? famCss(nd.fam) : `hsl(${hueOf(nd.fam)} 48% 56%)`; ctx.fill();
-      // family labels to the left, subgenre labels to the right
-      ctx.textAlign = isFam ? 'right' : 'left';
+      ctx.textAlign = isFam ? 'right' : 'left';   // fam labels left, sub labels right
       const lx = isFam ? sx - r - 6 : sx + r + 6;
       const label = `${nd.label} ${nd.count}`;
       ctx.font = isFam ? '800 15px Syne, sans-serif' : "500 11px 'JetBrains Mono', monospace";
