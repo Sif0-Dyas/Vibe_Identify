@@ -1647,7 +1647,7 @@ function escapeHtml(s){
   let W = 0, H = 0, DPR = 1;
   const rot = { x: -0.15, y: 0.5 };        // orbit angles
   const view = { zoom: 1, panx: 0, pany: 0 };
-  let spinning = true, running = false, rafId = null;
+  let spinSpeed = 0.0022, running = false, rafId = null, filterFam = null;
   let anim = null;                         // camera tween
   const proj = new Map();                  // hash -> {sx,sy,z,r} for this frame
   const CAM = 2.7;                         // camera distance (world units)
@@ -1805,8 +1805,19 @@ function escapeHtml(s){
 
   function buildLegend(){
     legendEl.innerHTML = FAMS.map(f =>
-      `<span class="leg"><span class="dot" style="background:${famCss(f)}"></span>${escapeHtml(f)} ${COUNTS[f]}</span>`
+      `<span class="leg" data-fam="${escapeHtml(f)}"><span class="dot" style="background:${famCss(f)}"></span>${escapeHtml(f)} ${COUNTS[f]}</span>`
     ).join('');
+    // click a legend chip to filter to that genre (click again to clear)
+    legendEl.querySelectorAll('.leg').forEach(el =>
+      el.onclick = () => { const f = el.getAttribute('data-fam'); applyFilter(filterFam === f ? null : f); });
+    // (re)populate the filter dropdown, preserving the current choice
+    const fe = document.getElementById('map-filter');
+    if (fe){
+      const cur = fe.value;
+      fe.innerHTML = `<option value="">all genres</option>` +
+        FAMS.map(f => `<option value="${escapeHtml(f)}">${escapeHtml(f)} · ${COUNTS[f]}</option>`).join('');
+      fe.value = FAMS.includes(cur) ? cur : '';
+    }
   }
 
   /* ---- canvas sizing ----------------------------------------------- */
@@ -1822,7 +1833,7 @@ function escapeHtml(s){
   function frame(now){
     if (!running) return;
     const t = now/1000;
-    if (spinning && !anim) rot.y += 0.0021;      // gentle idle spin
+    if (spinSpeed > 0 && !anim && !dragging) rot.y += spinSpeed;   // idle orbit
     if (anim){
       const p = Math.min(1,(now-anim.t0)/anim.dur), e = p<.5?4*p*p*p:1-Math.pow(-2*p+2,3)/2;
       rot.x = anim.f.rx + (anim.t.rx-anim.f.rx)*e;
@@ -1840,6 +1851,7 @@ function escapeHtml(s){
     proj.clear();
     const order = [];
     for (const n of NODES){
+      if (filterFam && n.fam !== filterFam) continue;   // genre filter
       const x =  n.x3*cy + n.z3*sy;
       const z = -n.x3*sy + n.z3*cy;
       const y2 = n.y3*cx - z*sx;
@@ -1882,25 +1894,37 @@ function escapeHtml(s){
       const persp = CAM/(CAM - z2);
       return { sx: cxp + x*persp*DISP, sy: cyp + y2*persp*DISP, z2, persp };
     };
+    // labels get a dark halo (stroke) so they stay legible over dense clusters
+    ctx.lineJoin = 'round';
+    const drawLabel = (text, p, fs, fill) => {
+      ctx.font = fs;
+      ctx.lineWidth = 3.5;
+      ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+      ctx.strokeText(text, p.sx, p.sy);
+      ctx.fillStyle = fill;
+      ctx.fillText(text, p.sx, p.sy);
+    };
     // family labels -- fade back (but never fully vanish) as we zoom in
     for (const f of FAMS){
+      if (filterFam && f !== filterFam) continue;
       const p = projPt(CENTROIDS[f]);
       const depth = clamp((p.z2+1.15)/2.3, 0, 1);
-      const a = (0.18 + 0.16*depth) * (1 - 0.72*lod);
-      if (a < 0.02) continue;
-      ctx.font = `800 ${Math.min(46, 15 + CENTROIDS[f].n*1.1) * p.persp}px Syne, sans-serif`;
-      ctx.fillStyle = `rgba(221,227,238,${a})`;
-      ctx.fillText(f.toUpperCase(), p.sx, p.sy);
+      const a = (0.34 + 0.22*depth) * (1 - 0.66*lod);
+      if (a < 0.03) continue;
+      drawLabel(f.toUpperCase(), p,
+        `800 ${Math.min(46, 15 + CENTROIDS[f].n*1.1) * p.persp}px Syne, sans-serif`,
+        `rgba(230,236,246,${a})`);
     }
     // subgenre labels -- fade in with zoom (tinted + mono, smaller)
     if (lod > 0.01){
       for (const key in STYLE_CENTROIDS){
+        if (filterFam && !key.startsWith(filterFam + '||')) continue;
         const c = STYLE_CENTROIDS[key], p = projPt(c);
         const depth = clamp((p.z2+1.15)/2.3, 0, 1);
-        const a = (0.16 + 0.2*depth) * lod;
-        ctx.font = `700 ${Math.min(24, 9 + c.n*0.45) * p.persp}px 'JetBrains Mono', monospace`;
-        ctx.fillStyle = `rgba(150,220,255,${a})`;
-        ctx.fillText(c.style.toUpperCase(), p.sx, p.sy);
+        const a = (0.42 + 0.28*depth) * lod;
+        drawLabel(c.style.toUpperCase(), p,
+          `700 ${Math.min(24, 9 + c.n*0.45) * p.persp}px 'JetBrains Mono', monospace`,
+          `rgba(150,225,255,${a})`);
       }
     }
 
@@ -1959,14 +1983,21 @@ function escapeHtml(s){
   canvas.addEventListener('pointercancel', endDrag);
   canvas.addEventListener('wheel', e => {
     e.preventDefault(); anim=null;
-    view.zoom = clamp(view.zoom * (e.deltaY<0?1.12:1/1.12), 0.35, 5);
+    const r = canvas.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const nz = clamp(view.zoom * (e.deltaY<0 ? 1.14 : 1/1.14), 0.3, 60);
+    const f = nz / view.zoom;                          // actual factor after clamp
+    // keep the point under the cursor fixed -> zoom into wherever you're looking
+    view.panx = mx - (mx - (W/2 + view.panx)) * f - W/2;
+    view.pany = my - (my - (H/2 + view.pany)) * f - H/2;
+    view.zoom = nz;
   }, { passive:false });
 
   /* ---- select + camera fly ----------------------------------------- */
   function selectNode(hash){
     const n = byHash.get(hash); if (!n) return;
     selHash = hash;
-    spinning = false;                              // hold still while focused
+    // fly the node to face the camera; the orbit keeps going afterwards
     // rotate the cloud so this node faces the camera, offset left of the popup
     const ry = Math.atan2(-n.x3, n.z3);
     const rx = Math.atan2(n.y3, Math.hypot(n.x3, n.z3));
@@ -2076,7 +2107,7 @@ function escapeHtml(s){
       ? title.slice(artist.length+3) : title;
 
   function closePopup(){
-    popEl.hidden = true; selHash = null; spinning = true;   // resume the spin
+    popEl.hidden = true; selHash = null;
   }
 
   /* ---- search ------------------------------------------------------ */
@@ -2115,9 +2146,30 @@ function escapeHtml(s){
 
   function resetView(){
     closePopup();
-    view.zoom=1; view.panx=0; view.pany=0; rot.x=-0.15; spinning=true; anim=null;
+    view.zoom=1; view.panx=0; view.pany=0; rot.x=-0.15; anim=null;
   }
-  resetB && resetB.addEventListener('click', resetView);
+  function focusFamily(fam){          // fly to a genre's centroid
+    const c = CENTROIDS[fam]; if (!c) return;
+    const ry = Math.atan2(-c.x, c.z), rx = Math.atan2(c.y, Math.hypot(c.x, c.z));
+    anim = { f:{rx:rot.x,ry:rot.y,z:view.zoom,px:view.panx,py:view.pany},
+             t:{rx, ry, z:2.0, px:0, py:0}, t0:performance.now(), dur:640 };
+  }
+  function applyFilter(fam){          // null = show all genres
+    filterFam = fam || null;
+    const fe = document.getElementById('map-filter');
+    if (fe) fe.value = filterFam || '';
+    closePopup();
+    if (filterFam) focusFamily(filterFam); else resetView();
+  }
+  resetB && resetB.addEventListener('click', () => applyFilter(null));
+
+  const spinEl = document.getElementById('map-spin');   // orbit-speed slider
+  const applySpin = () => { if (spinEl) spinSpeed = (spinEl.value / 100) * 0.006; };
+  spinEl && spinEl.addEventListener('input', applySpin);
+  applySpin();
+
+  const filterEl = document.getElementById('map-filter');
+  filterEl && filterEl.addEventListener('change', () => applyFilter(filterEl.value));
   modeEl && modeEl.addEventListener('click', e => {
     const b = e.target.closest('.mm'); if (!b || b.dataset.mode===mapMode) return;
     mapMode = b.dataset.mode;

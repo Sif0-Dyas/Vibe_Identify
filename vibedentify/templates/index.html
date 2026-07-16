@@ -87,6 +87,12 @@
       <button class="mm active" data-mode="regions" type="button">&#9678; regions</button>
       <button class="mm" data-mode="galaxy" type="button">&#10022; galaxy</button>
     </div>
+    <select id="map-filter" class="map-filter" title="show only one genre">
+      <option value="">all genres</option>
+    </select>
+    <label class="map-spin-wrap" title="orbit speed (drag to 0 to stop)">&#8635;
+      <input type="range" id="map-spin" min="0" max="100" value="37">
+    </label>
     <span class="map-hint" id="map-count">loading&hellip;</span>
     <span class="spacer"></span>
     <button id="map-reset" type="button" title="reset view">&#9737; fit</button>

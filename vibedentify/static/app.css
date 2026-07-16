@@ -823,6 +823,19 @@ body.view-map .lensbar{ display:none; }
 }
 .mm:hover{ color:var(--text); }
 .mm.active{ color:var(--text); background:var(--bg); }
+/* genre filter dropdown */
+.map-filter{
+  background:var(--panel-2); border:1px solid var(--line); border-radius:7px;
+  color:var(--text); font-family:'JetBrains Mono',monospace; font-size:10.5px;
+  padding:5px 8px; cursor:pointer; max-width:150px;
+}
+.map-filter:focus{ outline:none; border-color:var(--accent-a); }
+/* orbit-speed slider */
+.map-spin-wrap{
+  display:flex; align-items:center; gap:6px; color:var(--dim);
+  font-family:'JetBrains Mono',monospace; font-size:13px;
+}
+#map-spin{ width:76px; accent-color:var(--accent-a); cursor:pointer; }
 .map-hint{ font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--dim); }
 #map-reset{
   background:var(--panel-2); border:1px solid var(--line); color:var(--dim);
@@ -847,7 +860,9 @@ body.view-map .lensbar{ display:none; }
 .leg{
   display:flex; align-items:center; gap:5px;
   font-family:'JetBrains Mono',monospace; font-size:9.5px; color:var(--dim);
+  pointer-events:auto; cursor:pointer; padding:1px 3px; border-radius:4px;
 }
+.leg:hover{ color:var(--text); background:rgba(255,255,255,.06); }
 .leg .dot{ width:8px; height:8px; border-radius:50%; }
 
 /* ---- popup ---- */
