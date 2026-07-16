@@ -17,6 +17,9 @@ is read-only and training saves are copies.
 Built as a classic-Winamp homage (beveled panels, LCD readouts, Silkscreen
 font).
 
+> **New here?** The [**User Guide**](docs/USAGE.md) walks through the four ways
+> to analyze, how the pipeline works, the lens system, and the Map in detail.
+
 ---
 
 ## Stack

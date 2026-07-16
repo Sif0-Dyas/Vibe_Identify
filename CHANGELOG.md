@@ -50,7 +50,8 @@ _Work in progress lands here, then gets stamped with a version + date on release
 - **Omit / forget a track.** New `POST /forget/<hash>` deletes a track's analysis
   (cache + map + vibe/tag membership; the audio file is untouched). Exposed as
   **✕ omit** on each list row and **omit from library** in the map popup.
-- `CHANGELOG.md` (this file) and `README.md` project documentation.
+- `CHANGELOG.md` (this file), `README.md`, and a detailed
+  [`docs/USAGE.md`](docs/USAGE.md) user guide.
 - Packaging & metadata: `requirements.txt`, `requirements-dev.txt`,
   `pyproject.toml`, `.env.example`, and an MIT `LICENSE`.
 - A `pytest` smoke-test suite (`tests/`) exercising the HTTP surface in FAKE
