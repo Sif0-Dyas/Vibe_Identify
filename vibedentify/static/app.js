@@ -714,6 +714,24 @@ function finishRow(row, data, file){
   overrideBtn.title = 'set the genre yourself + save as training data';
   row.children[2].appendChild(overrideBtn);
 
+  /* ---- omit: delete this analysis entirely (e.g. a bogus read) ---- */
+  const omitBtn = document.createElement('button');
+  omitBtn.className = 'override-btn omit-btn';
+  omitBtn.textContent = '✕ omit';
+  omitBtn.title = 'delete this analysis — remove the track from your library (audio untouched)';
+  row.children[2].appendChild(omitBtn);
+  omitBtn.addEventListener('click', async () => {
+    if (!window.confirm(`Remove "${data.title}" from your library?\n\n`
+      + `Deletes its analysis (genre, BPM, key) and takes it off the map. `
+      + `The audio file is untouched.`)) return;
+    const res = getResult();
+    if (res && res.hash){ try{ await fetch(`/forget/${res.hash}`, {method:'POST'}); }catch(_){} }
+    results = results.filter(r => r.row !== row);
+    row.remove();
+    if (!rowsEl.querySelector('.row')) emptyEl.style.display = '';
+    refreshFooter();
+  });
+
   const editor = document.createElement('div');
   editor.className = 'override-editor';
   editor.style.display = 'none';
@@ -894,6 +912,7 @@ function failRow(row, msg){
 async function pump(){
   if (busy) return;
   busy = true;
+  let known = 0;
   while (queue.length){
     const {file, row} = queue.shift();
     const fd = new FormData();
@@ -901,6 +920,13 @@ async function pump(){
     try{
       const resp = await fetch('/analyze', {method:'POST', body:fd});
       const data = await resp.json();
+      if (resp.ok && data.cached){
+        // already analyzed (this session or a previous one) -> keep it out of
+        // the list entirely. (TODO: make this behaviour configurable later.)
+        row.remove();
+        known++;
+        continue;
+      }
       if (!resp.ok) failRow(row, data.error || resp.statusText);
       else finishRow(row, data, file);
     }catch(e){
@@ -908,11 +934,37 @@ async function pump(){
     }
   }
   busy = false;
+  if (!rowsEl.querySelector('.row')) emptyEl.style.display = '';   // list went empty
+  if (known){
+    const bs = document.getElementById('batch-status');
+    if (bs){
+      bs.textContent = `skipped ${known} already analyzed`;
+      setTimeout(() => { if (bs.textContent.startsWith('skipped')) bs.textContent = ''; }, 3000);
+    }
+  }
+  refreshFooter();
 }
 
+/* dedupe the drop/browse list by name+size, so re-dropping a file already in
+   the list is a no-op (the server would cache-hit it anyway; this just avoids a
+   redundant row). Cleared by "Clear list". */
+const listKeys = new Set();
+const fileKey = f => `${f.name}::${f.size}`;
+
 function enqueue(files){
+  let skipped = 0;
   for (const f of files){
+    const key = fileKey(f);
+    if (listKeys.has(key)){ skipped++; continue; }   // already in the list
+    listKeys.add(key);
     queue.push({file:f, row:addRow(f)});
+  }
+  if (skipped){
+    const bs = document.getElementById('batch-status');
+    if (bs){
+      bs.textContent = `skipped ${skipped} duplicate${skipped > 1 ? 's' : ''}`;
+      setTimeout(() => { if (bs.textContent.startsWith('skipped')) bs.textContent = ''; }, 2600);
+    }
   }
   pump();
 }
@@ -976,6 +1028,7 @@ clearB.addEventListener('click', () => {
   if (PLAYER.ctl){ PLAYER.ctl.stopVisual(); PLAYER.ctl = null; }
   while (OBJ_URLS.length) URL.revokeObjectURL(OBJ_URLS.pop());
   results = []; queue = [];
+  listKeys.clear();
   rowsEl.querySelectorAll('.row').forEach(r => r.remove());
   emptyEl.style.display = '';
   refreshFooter();
@@ -1923,14 +1976,31 @@ function escapeHtml(s){
       <div class="pop-h">similar artists</div>
       <div class="pop-artists" id="pop-artists"><span class="pop-bar">…</span></div>
       <div class="pop-h">similar tracks</div>
-      <div class="pop-sim" id="pop-sim"><span class="pop-bar">…</span></div>`;
+      <div class="pop-sim" id="pop-sim"><span class="pop-bar">…</span></div>
+      <div class="pop-omit-row">
+        <button class="pop-omit" title="delete this track's analysis (audio file untouched)">✕ omit from library</button>
+      </div>`;
     popEl.hidden = false;
     popEl.querySelector('.pop-x').onclick = closePopup;
+    popEl.querySelector('.pop-omit').onclick = () => omitTrack(n);
     try{
       simCache = await fetch(`/similar/${n.hash}?k=12`).then(r=>r.ok?r.json():[]);
     }catch(_){ simCache = []; }
     renderPick();
     renderSimilar(simCache);
+  }
+
+  // omit/forget: delete this track's analysis from the DB and drop it off the map
+  async function omitTrack(n){
+    if (!window.confirm(
+      `Remove "${n.title}" from your library?\n\n` +
+      `This deletes its analysis (genre, BPM, key) and takes it off the map. ` +
+      `Your audio file is NOT touched — re-scanning it will analyze it fresh.`)) return;
+    try{ await fetch(`/forget/${n.hash}`, {method:'POST'}); }catch(_){ /* still drop it locally */ }
+    NODES = NODES.filter(x => x.hash !== n.hash);
+    EDGES = EDGES.filter(e => e.a !== n.hash && e.b !== n.hash);
+    closePopup();
+    if (NODES.length) layout();   // recompute clusters/labels/legend without it
   }
 
   // "pull up a random song among the ones that match it the most"

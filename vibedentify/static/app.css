@@ -223,6 +223,8 @@ input[type=file]{display:none}
   cursor:pointer; margin-left:4px; vertical-align:1px;
 }
 .override-btn:hover{color:var(--text); border-color:var(--dimmer)}
+.omit-btn{ color:var(--err); border-style:solid; border-color:transparent; }
+.omit-btn:hover{ color:var(--err); border-color:var(--err); background:rgba(229,86,79,.10); }
 .override-editor{
   display:flex; align-items:center; gap:6px; margin-top:8px;
   padding:7px 8px; background:var(--panel); border:1px solid var(--line);
@@ -904,3 +906,12 @@ body.view-map .lensbar{ display:none; }
   display:flex; gap:8px;
 }
 .pop-pick .pk-sub .pct{ color:var(--accent-a); }
+
+/* omit / forget a track from the map popup */
+.pop-omit-row{ margin-top:12px; padding-top:10px; border-top:1px solid var(--line); }
+.pop-omit{
+  width:100%; background:none; border:1px solid var(--line); border-radius:7px;
+  color:var(--dim); font-family:'JetBrains Mono',monospace; font-size:10.5px;
+  padding:7px; cursor:pointer;
+}
+.pop-omit:hover{ color:var(--err); border-color:var(--err); background:rgba(229,86,79,.10); }

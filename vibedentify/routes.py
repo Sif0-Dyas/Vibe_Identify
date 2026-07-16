@@ -286,6 +286,18 @@ def save_training_route():
     return jsonify({"saved": str(dest), "genre": safe})
 
 
+@bp.post("/forget/<h>")
+def forget_route(h):
+    """Delete a track's analysis by content hash: removes it from the cache, the
+    map, and any vibe/tag membership. Does NOT touch the audio file -- dropping
+    the track again will re-analyze it from scratch."""
+    with _db_lock, closing(db()) as conn, conn as c:
+        deleted = c.execute("DELETE FROM tracks WHERE hash=?", (h,)).rowcount
+        c.execute("DELETE FROM track_tags WHERE hash=?", (h,))
+        c.execute("DELETE FROM vibe_tracks WHERE hash=?", (h,))
+    return jsonify({"ok": True, "deleted": deleted})
+
+
 # ----------------------------------------------------------------------------
 # Audio preview: stream a previously-analyzed track for in-app playback
 # ----------------------------------------------------------------------------
