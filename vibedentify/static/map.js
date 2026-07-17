@@ -600,17 +600,22 @@
       if (spread < 90){
         // tight ball (galaxy): centroid *direction* is basically noise, so ring
         // the labels evenly by angle around the cluster, each tied back by a
-        // leader line. The ring radius tracks the ball's ON-SCREEN size (+margin)
-        // so labels always clear the cloud instead of overlapping it when the
-        // ball is large (e.g. zoomed out at the fit view).
+        // leader line. Centre the ring on the ACTUAL node cloud (its visual mass)
+        // -- not the family-centroid mean, which the dense clusters skew off to
+        // one side -- and size the radius to the ball's on-screen extent (+ a
+        // generous margin) so the labels clear the cloud all round, not just on
+        // one side, and sit well clear when zoomed out.
+        let bx=0, by=0, bn=0;
+        for (const [, pp] of proj){ bx+=pp.sx; by+=pp.sy; bn++; }
+        if (bn){ cx0 = bx/bn; cy0 = by/bn; }
         let ballR = 0;
         { const ds = []; for (const [, pp] of proj) ds.push(Math.hypot(pp.sx-cx0, pp.sy-cy0));
-          ballR = pctl(ds, 0.9); }
+          ballR = pctl(ds, 0.92); }
         const arr = fl.slice().sort((a,b) =>
           Math.atan2(a.ay-cy0, a.ax-cx0) - Math.atan2(b.ay-cy0, b.ax-cx0));
         const N = arr.length;
-        const Rx = Math.max(180, ballR*1.18 + 62, N*8);   // wider: room for long names
-        const Ry = Math.max(150, ballR*1.06 + 50);        // tall enough to clear the ball
+        const Rx = Math.max(210, ballR*1.32 + 90, N*8);   // wider: room for long names
+        const Ry = Math.max(180, ballR*1.22 + 78);        // tall enough to clear the ball
         for (let i=0; i<N; i++){
           const ang = (i/N)*6.2832 - 1.5708;            // start at top, go clockwise
           arr[i].lx = cx0 + Math.cos(ang)*Rx;
