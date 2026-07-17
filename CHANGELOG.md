@@ -69,6 +69,10 @@ _Work in progress lands here, then gets stamped with a version + date on release
   handful of in-context false positives (fake-mode RNG seeds, the hardcoded-HTTPS
   model download, best-effort `try/except` around BPM/key) are triaged with
   inline `# nosec <id>` justifications, so any *new* finding fails the build.
+- **CI: pip-audit (dependency CVEs).** Audits the pinned runtime deps against the
+  advisory DB on every push. `essentia-tensorflow` is excluded (its pre-release
+  wheel is unauditable and has no CVE history — documented in the workflow), the
+  same blind spot as its CI-install omission.
 
 ### Changed
 - **Split `static/app.js` (2.7k lines) into three `<script>`-loaded files.** The

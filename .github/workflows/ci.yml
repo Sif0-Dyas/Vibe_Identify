@@ -19,7 +19,7 @@ jobs:
         # lazily inside functions and the test suite runs in FAKE_ANALYZER mode,
         # so the models are never loaded. Installing it (large, niche wheels)
         # would only slow CI down without exercising any extra code path.
-        run: pip install flask mutagen numpy pytest ruff bandit
+        run: pip install flask mutagen numpy pytest ruff bandit pip-audit
 
       - name: Lint (ruff)
         run: |
@@ -32,6 +32,16 @@ jobs:
         # are triaged with inline `# nosec <id>` justifications, so a clean run is
         # zero findings and any NEW finding fails the build.
         run: bandit -r vibedentify/ -q
+
+      - name: Dependency audit (pip-audit)
+        # Audit the pinned runtime deps for known CVEs. essentia-tensorflow is
+        # filtered out for the same reason it's omitted from the install above:
+        # its niche pre-release wheel can't be resolved by pip-audit's sandbox,
+        # and it has no CVE history. Everything else (flask/mutagen/numpy) is
+        # audited, so a future advisory on those fails the build.
+        run: |
+          grep -v essentia requirements.txt > /tmp/req-audit.txt
+          pip-audit -r /tmp/req-audit.txt --no-deps
 
       - name: Test (pytest)
         run: pytest -q
