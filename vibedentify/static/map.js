@@ -66,6 +66,23 @@
     return ((h % 360) + 360) % 360;
   }
   const famCss = fam => `hsl(${hueOf(fam)} 62% 62%)`;
+  // deterministic 0..1 hash of a string
+  function hash01(s){ let h = 0; for (let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i)) | 0;
+    return (((h % 4096) + 4096) % 4096) / 4096; }
+  // A subgenre's colour = its family's hue nudged a little (so it still reads as
+  // the same family) plus a small saturation/lightness wobble -- subgenres come
+  // out distinct but kin, so a family cluster shows its internal groupings even
+  // from afar. Returns {h, s, dl} (hue, saturation, lightness delta).
+  function styleShade(fam, style){
+    const base = hueOf(fam);
+    if (!style || style === fam) return { h: base, s: 64, dl: 0 };
+    const r = hash01(style + '|' + fam);
+    return {
+      h: ((base + (r*2 - 1)*26) % 360 + 360) % 360,   // family hue +/- 26 degrees
+      s: 54 + Math.floor(hash01('s' + style) * 26),   // 54..80
+      dl: (hash01('l' + style)*2 - 1) * 9,            // +/- 9 lightness
+    };
+  }
   const durfmt = s => { if (s==null) return '--'; s=Math.round(s);
     return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); };
   const keyfmt = n => n.camelot
@@ -98,7 +115,8 @@
     byHash.clear();
     for (const n of NODES){
       n.fam = familyOf(n.style || n.styles[0] || 'Other') || 'Other';
-      n.hue = hueOf(n.fam);
+      const sh = styleShade(n.fam, n.style || n.styles[0]);
+      n.hue = sh.h; n.sat = sh.s; n.dl = sh.dl;   // shade of the family colour, per subgenre
       byHash.set(n.hash, n);
     }
     COUNTS = {};
@@ -330,7 +348,10 @@
       const r = isFam ? 6 + Math.min(12, Math.sqrt(nd.count)) : 3.5 + Math.min(8, Math.sqrt(nd.count)*0.9);
       treeHits.push({ node: nd, sx, sy, r });
       ctx.beginPath(); ctx.arc(sx, sy, r, 0, 6.2832);
-      ctx.fillStyle = isFam ? famCss(nd.fam) : `hsl(${hueOf(nd.fam)} 48% 56%)`; ctx.fill();
+      if (isFam){ ctx.fillStyle = famCss(nd.fam); }
+      else { const sh = styleShade(nd.fam, nd.label);   // subgenre = shade of family
+        ctx.fillStyle = `hsl(${sh.h} ${clamp(sh.s-4,42,80)}% ${clamp(56+sh.dl,44,66)}%)`; }
+      ctx.fill();
       ctx.textAlign = isFam ? 'right' : 'left';   // fam labels left, sub labels right
       const lx = isFam ? sx - r - 6 : sx + r + 6;
       const hot = nd === hoverGenre;
@@ -424,7 +445,9 @@
     // Labels with semantic zoom (LOD): family names when zoomed out, subgenre
     // names fading in as you zoom in. Galaxy mode has no hierarchy -> no fade.
     ctx.textAlign='center'; ctx.textBaseline='middle';
-    const lod = (mapMode==='galaxy') ? 0 : clamp((view.zoom - 1.2) / (2.4 - 1.2), 0, 1);
+    // subgenre detail ramps in with zoom (sooner than before), then is gated
+    // per-family by how centred/near that cluster is -- see famFocus below.
+    const zoomLod = (mapMode==='galaxy') ? 0 : clamp((view.zoom - 0.8) / (1.7 - 0.8), 0, 1);
     const projPt = c => {
       const ax = c.x-pivot.x, ay = c.y-pivot.y, az = c.z-pivot.z;
       const x = ax*cy + az*sy, z = -ax*sy + az*cy;
@@ -442,6 +465,20 @@
       ctx.fillStyle = fill;
       ctx.fillText(text, p.sx, p.sy);
     };
+    // Per-family "focus": high when that cluster is near the screen centre AND
+    // you're zoomed in on it. A focused family fades its own big label and shows
+    // its subgenre labels; families off to the side stay coarse (family label
+    // only). So being deep in one cluster reveals ITS subgenres without lighting
+    // up subgenres across the whole map -- and other clusters stay identifiable.
+    const focusR = 0.40 * Math.min(W, H);
+    const famFocus = {};
+    for (const f of FAMS){
+      const cp = projPt(CENTROIDS[f]);
+      const prox = cp.persp > 0
+        ? clamp(1 - Math.hypot(cp.sx - cxp, cp.sy - cyp) / focusR, 0, 1) : 0;
+      famFocus[f] = zoomLod * prox;
+    }
+
     // family labels: measure, then relax apart in 2D (box separation) so they
     // fan out around the cluster -- even a tight galaxy ball -- each tied back
     // to its true centroid by a colour-coded leader line.
@@ -452,7 +489,7 @@
       const p = projPt(CENTROIDS[f]);
       if (p.persp <= 0) continue;
       const depth = clamp((p.z2+1.15)/2.3, 0, 1);
-      const alpha = (0.52 + 0.32*depth) * (1 - 0.55*lod);
+      const alpha = (0.52 + 0.32*depth) * (1 - 0.9*(famFocus[f]||0));   // fade when focused
       if (alpha < 0.04) continue;
       const fs = Math.min(21, 13 + CENTROIDS[f].n*0.3) * clamp(p.persp, 0.9, 1.25);
       ctx.font = `800 ${fs}px Syne, sans-serif`;
@@ -510,18 +547,30 @@
       drawLabel(l.f.toUpperCase(), {sx:l.lx, sy:l.ly},
         `800 ${l.fs}px Syne, sans-serif`, `rgba(233,238,247,${l.alpha})`);
     }
-    // subgenre labels -- fade in with zoom (tinted + mono, smaller)
-    if (lod > 0.01){
+    // subgenre labels -- shown only inside the focused cluster(s), coloured as a
+    // shade of the family so they read as "part of" it. Drawn far -> near.
+    {
+      const subs = [];
       for (const key in STYLE_CENTROIDS){
         if (filterFam && !key.startsWith(filterFam + '||')) continue;
+        const fam = key.slice(0, key.indexOf('||'));
+        const focus = famFocus[fam] || 0;
+        if (focus < 0.02) continue;
         const c = STYLE_CENTROIDS[key], p = projPt(c);
         if (p.persp <= 0) continue;
         const depth = clamp((p.z2+1.15)/2.3, 0, 1);
-        const a = (0.5 + 0.3*depth) * lod;
-        drawLabel(c.style.toUpperCase(), p,
-          `700 ${Math.min(22, 10 + c.n*0.4) * clamp(p.persp,0.85,1.3)}px 'JetBrains Mono', monospace`,
-          `rgba(155,228,255,${a})`);
+        const a = (0.62 + 0.38*depth) * clamp(focus*1.5, 0, 1);
+        if (a < 0.03) continue;
+        const sh = styleShade(fam, c.style);
+        subs.push({ p, depth, text: c.style.toUpperCase(),
+          fs: Math.min(22, 11 + c.n*0.4) * clamp(p.persp, 0.85, 1.3),
+          // bright, high-lightness tint of the family hue so it reads over the
+          // similarly-hued nodes (the dark halo in drawLabel does the rest).
+          col: `hsla(${sh.h} ${clamp(sh.s+20, 55, 96)}% ${clamp(82 + sh.dl*0.5, 74, 90)}% / ${a})` });
       }
+      subs.sort((x,y) => x.depth - y.depth);
+      for (const s of subs)
+        drawLabel(s.text, s.p, `700 ${s.fs}px 'JetBrains Mono', monospace`, s.col);
     }
 
     // nodes far -> near
@@ -538,7 +587,7 @@
       }
       ctx.globalAlpha = (0.45 + 0.55*p.depth) * dim;
       ctx.beginPath(); ctx.arc(p.sx, p.sy, p.r, 0, 6.2832);
-      ctx.fillStyle = `hsl(${n.hue} 64% ${clamp(light,18,82)}%)`;
+      ctx.fillStyle = `hsl(${n.hue} ${n.sat||64}% ${clamp(light + (n.dl||0), 16, 84)}%)`;
       ctx.fill();
       if (compatible){                          // key + BPM compatible -> teal ring
         ctx.globalAlpha = 0.5 + 0.5*p.depth;
@@ -718,7 +767,8 @@
     }catch(_){ /* still relabel locally */ }
     n.style = genre;
     n.fam = familyOf(genre) || 'Other';
-    n.hue = hueOf(n.fam);
+    const sh = styleShade(n.fam, genre);
+    n.hue = sh.h; n.sat = sh.s; n.dl = sh.dl;
     n.flag = false; n.suggest = null;
     closePopup();
     if (NODES.length) layout();          // re-cluster with the new genre

@@ -99,6 +99,17 @@ _Work in progress lands here, then gets stamped with a version + date on release
   `.gitignore` gains `_cache/`, `manifest.json`, `*.npz` as insurance.
 
 ### Changed
+- **Map: subgenre colours + spatial, per-cluster label detail.** Each node is now
+  a distinct *shade* of its family's colour keyed to its subgenre (family hue
+  ±26° plus a small saturation/lightness wobble), so a big single-genre cluster
+  (e.g. Bass Music) visibly shows its internal groupings even from afar instead of
+  reading as one flat colour. Label level-of-detail is now **per-family and
+  spatial**: as you zoom toward a cluster, *its* family label fades out and its
+  subgenre labels fade in (as bright shades of the family), while clusters off to
+  the side keep their family label and stay coarse — so being deep in one cluster
+  reveals its subgenres without lighting up the whole map, and the other clusters
+  stay identifiable. Subgenres also surface at a lower zoom than before, and the
+  tree view's subgenre nodes get the same family-shade colours.
 - **Split `static/app.js` (2.7k lines) into three `<script>`-loaded files.** The
   3-D Genre Map moved to `static/map.js` and the row audio player to
   `static/player.js`; `static/app.js` keeps the rest (rows, lenses, vibes, tags,
