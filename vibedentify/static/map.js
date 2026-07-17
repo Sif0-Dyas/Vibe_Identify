@@ -40,7 +40,8 @@
   let W = 0, H = 0, DPR = 1;
   const rot = { x: -0.15, y: 0.5 };        // orbit angles
   const view = { zoom: 1, panx: 0, pany: 0 };
-  const pivot = { x:0, y:0, z:0 };     // orbit centre: eases toward the selected track
+  const pivot = { x:0, y:0, z:0 };     // orbit centre (eased): see the frame loop
+  let famPivot = null;                 // a clicked genre's centroid to orbit around
   let spinSpeed = 0.0022, running = false, rafId = null, filterFam = null;
   let edgesOn = true, harmonic = false, flaggedOnly = false;
   const tipEl = document.getElementById('map-tip');
@@ -69,6 +70,8 @@
   // user-customisable per-family base hue (persisted); falls back to the hash hue
   let FAM_HUE = {};
   try { FAM_HUE = JSON.parse(localStorage.getItem('vibeFamHue') || '{}') || {}; } catch(_){ FAM_HUE = {}; }
+  let legendCollapsed = false;
+  try { legendCollapsed = localStorage.getItem('vibeLegend') === 'off'; } catch(_){ /* private mode */ }
   const famHue = fam => (FAM_HUE[fam] == null ? hueOf(fam) : FAM_HUE[fam]);
   const famCss = fam => `hsl(${famHue(fam)} 62% 62%)`;
   function hexToHue(hex){
@@ -276,11 +279,37 @@
   }
 
   function buildLegend(){
-    legendEl.innerHTML = FAMS.map(f =>
-      `<span class="leg" data-fam="${escapeHtml(f)}"><span class="dot" title="click the dot to recolour this genre" style="background:${famCss(f)}"></span>${escapeHtml(f)} ${COUNTS[f]}</span>`
-    ).join('');
-    // click the dot -> recolour the genre; click the chip -> filter (toggle)
-    legendEl.querySelectorAll('.leg').forEach(el => {
+    // subgenre breakdown per overarching genre (family)
+    const subs = {};
+    for (const n of NODES){ const st = n.style || n.fam;
+      (subs[n.fam] = subs[n.fam] || {})[st] = (subs[n.fam][st] || 0) + 1; }
+    const groups = FAMS.map(f => {
+      const active = filterFam === f ? ' active' : '';
+      const head = `<span class="leg leg-fam${active}" data-fam="${escapeHtml(f)}">`
+        + `<span class="dot" title="click to recolour this genre" style="background:${famCss(f)}"></span>`
+        + `<b>${escapeHtml(f)}</b>&nbsp;${COUNTS[f]}</span>`;
+      // a lone subgenre identical to the family isn't really a "sub" -> skip it
+      const list = Object.entries(subs[f] || {}).filter(([st]) => st !== f).sort((a,b) => b[1]-a[1]);
+      if (!list.length) return `<div class="leg-group">${head}</div>`;
+      const shown = list.slice(0, 10), more = list.length - shown.length;
+      const subHtml = shown.map(([st, c]) => {
+        const sh = styleShade(f, st);
+        const col = `hsl(${sh.h} ${clamp(sh.s, 40, 88)}% ${clamp(58 + sh.dl, 44, 70)}%)`;
+        return `<span class="leg-sub"><span class="sdot" style="background:${col}"></span>${escapeHtml(st)} ${c}</span>`;
+      }).join('') + (more > 0 ? `<span class="leg-more">+${more} more</span>` : '');
+      return `<div class="leg-group">${head}<div class="leg-subs">${subHtml}</div></div>`;
+    }).join('');
+    legendEl.innerHTML =
+      `<button class="leg-toggle" type="button" title="show / hide the genre legend">&#9698; genres</button>`
+      + `<div class="leg-body">${groups}</div>`;
+    legendEl.classList.toggle('collapsed', legendCollapsed);
+    legendEl.querySelector('.leg-toggle').onclick = () => {
+      legendCollapsed = !legendCollapsed;
+      legendEl.classList.toggle('collapsed', legendCollapsed);
+      try{ localStorage.setItem('vibeLegend', legendCollapsed ? 'off' : 'on'); }catch(_){ /* private */ }
+    };
+    // click the dot -> recolour that genre; click the header -> filter (toggle)
+    legendEl.querySelectorAll('.leg-fam').forEach(el => {
       const f = el.getAttribute('data-fam');
       el.querySelector('.dot').onclick = ev => { ev.stopPropagation(); pickFamColor(f, ev.currentTarget); };
       el.onclick = () => applyFilter(filterFam === f ? null : f);
@@ -445,11 +474,15 @@
     }
     if (mapMode === 'tree'){ renderTree(); rafId = requestAnimationFrame(frame); return; }
     if (spinSpeed > 0 && !anim && !dragging) rot.y += spinSpeed;   // idle orbit
-    // orbit pivots around the selected track (eased); origin when nothing selected
+    // orbit centre (eased): a clicked genre's centroid, else the selected track,
+    // else the origin. So clicking a genre orbits AROUND that cluster.
     const sel = selHash ? byHash.get(selHash) : null;
-    pivot.x += ((sel?sel.x3:0) - pivot.x) * 0.12;
-    pivot.y += ((sel?sel.y3:0) - pivot.y) * 0.12;
-    pivot.z += ((sel?sel.z3:0) - pivot.z) * 0.12;
+    const tx = famPivot ? famPivot.x : (sel ? sel.x3 : 0);
+    const ty = famPivot ? famPivot.y : (sel ? sel.y3 : 0);
+    const tz = famPivot ? famPivot.z : (sel ? sel.z3 : 0);
+    pivot.x += (tx - pivot.x) * 0.12;
+    pivot.y += (ty - pivot.y) * 0.12;
+    pivot.z += (tz - pivot.z) * 0.12;
     const cy=Math.cos(rot.y), sy=Math.sin(rot.y), cx=Math.cos(rot.x), sx=Math.sin(rot.x);
     const DISP = Math.min(W,H)*0.40*view.zoom;
     const cxp = W/2 + view.panx, cyp = H/2 + view.pany;
@@ -758,7 +791,7 @@
   /* ---- select + camera fly ----------------------------------------- */
   function selectNode(hash){
     const n = byHash.get(hash); if (!n) return;
-    selHash = hash;
+    selHash = hash; famPivot = null;   // orbit around this track now, not a genre
     if (mapMode !== 'tree'){
       // the pivot eases to this track (frame loop), so it becomes the orbit
       // centre. keep the rotation, just zoom in a bit and recentre the view.
@@ -907,7 +940,7 @@
       ? title.slice(artist.length+3) : title;
 
   function closePopup(){
-    popEl.hidden = true; selHash = null;
+    popEl.hidden = true; selHash = null; famPivot = null;
   }
 
   /* ---- search ------------------------------------------------------ */
@@ -950,8 +983,10 @@
     if (mapMode === 'tree') fitTree();
     else view.zoom = clamp(0.95 / (MAXR || 1), 0.25, 1.6);   // fit the cloud
   }
-  function focusFamily(fam){          // fly to a genre's centroid
+  function focusFamily(fam){          // fly to a genre's centroid + orbit around it
     const c = CENTROIDS[fam]; if (!c) return;
+    closePopup();                     // drop any track selection...
+    famPivot = c;                     // ...then orbit around this cluster's centre
     const ry = Math.atan2(-c.x, c.z), rx = Math.atan2(c.y, Math.hypot(c.x, c.z));
     anim = { f:{rx:rot.x,ry:rot.y,z:view.zoom,px:view.panx,py:view.pany},
              t:{rx, ry, z:2.0, px:0, py:0}, t0:performance.now(), dur:640 };

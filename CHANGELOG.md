@@ -56,11 +56,15 @@ _Work in progress lands here, then gets stamped with a version + date on release
   **⚠ sounds like &lt;X&gt;** hint on list rows that prefills the override.
   `/analyze` also attaches the flag to each new read (`vibedentify/insight.py`;
   thresholds conf < 0.55, agree ≥ 0.60, sim ≥ 0.80, k=8 → ~5% flag rate).
-- **Map: click a genre name to fly to its cluster, and recolour genres.**
-  Clicking a family label on the map now flies the camera to that cluster.
-  Clicking a legend entry's **colour dot** opens a picker to recolour that whole
-  genre (and its subgenre shades); the choice persists in `localStorage` and
-  re-applies on load. Clicking the legend **text** still filters as before.
+- **Map: click a genre name to fly to & orbit its cluster; hierarchical legend;
+  recolour genres.** Clicking a family label flies the camera to that cluster and
+  now **orbits around the cluster's centre** (a family pivot) instead of the
+  origin, so the cluster stays framed while the rest rotates. The genre legend is
+  a **collapsible, scrollable panel** that groups each overarching genre with its
+  subgenres beneath it (indented, in their shade colours) so the hierarchy is
+  clear. Clicking a legend entry's **colour dot** opens a picker to recolour that
+  whole genre (and its subgenre shades), persisted in `localStorage`; clicking the
+  genre **text** filters as before.
 - **Omit / forget a track.** New `POST /forget/<hash>` deletes a track's analysis
   (cache + map + vibe/tag membership; the audio file is untouched). Exposed as
   **✕ omit** on each list row and **omit from library** in the map popup.
