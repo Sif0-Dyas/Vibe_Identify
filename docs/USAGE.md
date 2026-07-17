@@ -139,6 +139,40 @@ Switch between them with the buttons at the top. They answer different questions
 - **✦ galaxy** — no genre grouping at all; position is *pure* sonic similarity, so clusters form naturally from how tracks actually sound. **Use this to** discover surprising neighbors and natural groupings the genre labels miss.
 - **⊢ tree** — your library as a branching **taxonomy**: root → families → subgenres, with bigger branches for the parts of your collection you have more of. **Use this to** understand the make-up of your library at a glance (hover a branch to reveal its track count).
 
+**At a glance** — the same library, arranged three ways:
+
+```
+◎ REGIONS  —  arranged by GENRE
+     ·House·                ·Techno·
+   ····                          ····
+        ·····Bass Music·····
+   ·Trance·                 ·Chill-out·
+   -> each genre is its own cluster;
+      subgenres form patches inside it.
+      "where does a genre live?"
+
+✦ GALAXY  —  arranged by SOUND
+            ····  ·····  ··
+        ··························
+        ····· ··············· ····
+            ····  ······  ···
+   -> one blob; a track's position is
+      pure sonic similarity, not label.
+      "what actually sounds alike?"
+
+⊢ TREE  —  the HIERARCHY / proportions
+   root ─┬─ Bass Music ─┬─ Dubstep
+         │              └─ Drum n Bass
+         ├─ House ──────┬─ Deep House
+         │              └─ Bassline
+         └─ Techno ───── …
+   -> a branching taxonomy; longer
+      branches = more tracks.
+      "what's the make-up of my library?"
+```
+
+Regions and galaxy are the explorable 3-D point clouds (drag to orbit, click a genre to fly in); tree is a flat 2-D diagram of the structure.
+
 ### Getting around
 
 You can **orbit** (rotate), **pan** (slide), and **zoom** independently. A small **nav legend in the top-left corner** always lists the controls (click its header to collapse it):

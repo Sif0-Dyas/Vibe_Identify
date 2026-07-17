@@ -137,7 +137,8 @@ _Work in progress lands here, then gets stamped with a version + date on release
   through every capability from a new user's point of view, rather than covering
   installation and internals (those live in the README). Paragraphs are single-
   line so the in-app markdown renderer fills them correctly (bold no longer
-  breaks across a wrapped line).
+  breaks across a wrapped line). Includes an at-a-glance ASCII diagram
+  contrasting the three map layouts (regions / galaxy / tree).
 - **Restructured the backend into a package.** The ~1.2 k-line `genre_gui.py`
   monolith is split into a `vibedentify/` package — `config.py`, `db.py`,
   `analysis.py`, a single-Blueprint `routes.py`, and a `create_app()` factory
