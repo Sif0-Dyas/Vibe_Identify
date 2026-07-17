@@ -250,8 +250,6 @@ function drawWave(canvas, peaks, fallbackColor, segments, focus, mainSet){
     const g = Math.exp(-(d * d) / (2 * ZONE * ZONE));   // 1 at cursor -> 0 far
     return sx - STRENGTH * d * g;                        // compress toward focus
   }
-  // display label for a source frame, collapsing minor genres to "Other"
-  const disp = i => bandLabel(segments[Math.max(0, Math.min(i, segN - 1))], mainSet);
 
   const cols = Math.max(Math.floor(w), 1);
   let lastLabel = null;
@@ -278,16 +276,6 @@ function drawWave(canvas, peaks, fallbackColor, segments, focus, mainSet){
     ctx.fillRect(px, mid - amp, 1.05, amp * 2);
   }
   ctx.globalAlpha = 1;
-}
-
-function roundRect(ctx, x, y, w, h, r){
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
 }
 
 function fmtDur(sec){
@@ -373,7 +361,6 @@ function finishRow(row, data, file){
   row.classList.remove('pending');
   const styles = data.styles || [];
   const primary = styles[0] || {style: '?', score: 0};   // guard: model returned no styles
-  const total = styles.reduce((a,s) => a + s.score, 0) || 1;
   const pcol = colorFor(primary.style);
   row.querySelector('.title').textContent = data.title;
 
@@ -442,7 +429,6 @@ function finishRow(row, data, file){
 
     // effective mode = per-row override (if set) else the global default
     function segMode(){ return row._segOverride || GLOBAL.seg; }
-    function identityMode(){ return row._idOverride || GLOBAL.identity; }
 
     function applySmoothing(){
       // 1) segmentation lens turns per-frame top-k into the genre stream
@@ -977,7 +963,6 @@ clearB.addEventListener('click', () => {
   refreshFooter();
 });
 
-/* global lens defaults -- re-apply to every row that hasn't overridden that axis */
 /* ---- EQ bars: build the header signature element ---- */
 (function(){
   const el = document.getElementById('eq-bars');

@@ -14,6 +14,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Install dependencies
         # essentia-tensorflow is intentionally omitted here: it is imported
         # lazily inside functions and the test suite runs in FAKE_ANALYZER mode,
@@ -42,6 +46,15 @@ jobs:
         run: |
           grep -v essentia requirements.txt > /tmp/req-audit.txt
           pip-audit -r /tmp/req-audit.txt --no-deps
+
+      - name: Lint JS (eslint)
+        # Static check for the split frontend (app.js / player.js / map.js share
+        # one global scope). no-undef catches the split's failure mode: a function
+        # moved to one file but still called from another (a cross-file
+        # ReferenceError no Python check would see).
+        run: |
+          npm ci
+          npx eslint vibedentify/static/
 
       - name: Test (pytest)
         run: pytest -q

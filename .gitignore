@@ -33,3 +33,6 @@ Thumbs.db
 # Logs / temp
 *.log
 tmp/
+
+# Node (frontend lint tooling only)
+node_modules/

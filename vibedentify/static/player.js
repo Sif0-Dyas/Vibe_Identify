@@ -5,6 +5,8 @@
    Exposes the globals PLAYER, OBJ_URLS and attachPlayer(), which app.js's
    row builder and Clear handler use. See index.html. */
 
+/* exported attachPlayer */ // defined here, called from app.js's finishRow (shared scope)
+
 /* ---- shared audio preview player: one track plays at a time. Each row
    registers a controller (PLAYER.ctl) that the audio events drive; starting a
    new row hands the single <audio> over and resets the previous row's UI. ---- */

@@ -73,6 +73,13 @@ _Work in progress lands here, then gets stamped with a version + date on release
   advisory DB on every push. `essentia-tensorflow` is excluded (its pre-release
   wheel is unauditable and has no CVE history — documented in the workflow), the
   same blind spot as its CI-install omission.
+- **CI: ESLint (frontend).** Flat-config `eslint.config.js` lints
+  `vibedentify/static/*.js` for `no-undef` / `no-unused-vars` — catching the
+  split's failure mode, a cross-file `ReferenceError` between app.js / player.js /
+  map.js. The shared cross-file globals are declared in the config; the first run
+  earned its keep by flagging dead helpers (`roundRect`, `disp`, `total`,
+  `identityMode`), now removed, and a stale comment ESLint read as a `/* global */`
+  directive.
 
 ### Changed
 - **Split `static/app.js` (2.7k lines) into three `<script>`-loaded files.** The
