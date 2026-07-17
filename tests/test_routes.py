@@ -51,13 +51,16 @@ def test_audio_unknown_hash_404(client):
     assert r.status_code == 404
 
 
-def _tiny_wav_bytes():
+def _tiny_wav_bytes(sample=0):
+    # `sample` varies the audio content so callers can make DISTINCT files
+    # (distinct content hash). A batch/map test needs separate tracks, not three
+    # byte-identical copies the content-hash cache would collapse into one.
     buf = io.BytesIO()
     w = wave.open(buf, "w")
     w.setnchannels(1)
     w.setsampwidth(2)
     w.setframerate(8000)
-    w.writeframes(struct.pack("<800h", *([0] * 800)))
+    w.writeframes(struct.pack("<800h", *([sample] * 800)))
     w.close()
     return buf.getvalue()
 
@@ -142,8 +145,8 @@ def test_artist_prefers_metadata_tag():
 def test_batch_analyzes_folder_and_caches(client, tmp_path):
     # a server-side folder of tiny audio files -> an NDJSON stream: a `total`
     # line, then one result per file; a re-run returns every file from cache.
-    for name in ("a.wav", "b.wav", "c.wav"):
-        (tmp_path / name).write_bytes(_tiny_wav_bytes())
+    for i, name in enumerate(("a.wav", "b.wav", "c.wav")):
+        (tmp_path / name).write_bytes(_tiny_wav_bytes(sample=i + 1))  # distinct content each
 
     def run():
         r = client.post("/batch", json={"path": str(tmp_path)})
@@ -183,12 +186,13 @@ def test_map_populated(client):
     # analyze a few tracks, then the map returns them as nodes; every edge only
     # ever references a real node hash.
     hashes = []
-    for name in ("m1.wav", "m2.wav", "m3.wav"):
-        data = {"file": (io.BytesIO(_tiny_wav_bytes()), name)}
+    for i, name in enumerate(("m1.wav", "m2.wav", "m3.wav")):
+        data = {"file": (io.BytesIO(_tiny_wav_bytes(sample=i + 1)), name)}  # 3 distinct tracks
         h = client.post("/analyze", data=data, content_type="multipart/form-data").get_json()[
             "hash"
         ]
         hashes.append(h)
+    assert len(set(hashes)) == 3  # distinct content -> distinct nodes (not deduped)
 
     body = client.get("/map").get_json()
     node_hashes = {n["hash"] for n in body["nodes"]}

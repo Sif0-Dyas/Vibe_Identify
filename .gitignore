@@ -25,6 +25,13 @@ essentia_models/
 *.pb
 *.onnx
 
+# Custom-genre training artifacts. The scripts write these OUTSIDE the repo
+# (~/genre_training/_cache/, manifest.json; the .npz under ~/essentia_models),
+# but ignore them here as insurance against a stray in-repo run.
+_cache/
+manifest.json
+*.npz
+
 # OS / editor
 .DS_Store
 Thumbs.db

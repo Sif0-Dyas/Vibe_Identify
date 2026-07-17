@@ -86,6 +86,17 @@ _Work in progress lands here, then gets stamped with a version + date on release
   re-hit), `/compare`, `/map` with a populated DB (edges only reference real
   nodes), the vibe lifecycle (`/vibes/add` → `/weight` → `/members` → `/remove`),
   and `/vibes/match` + `/vibes/<id>/playlist` — taking coverage 42% → 55%.
+- **Custom-genre training pipeline (`training/`) documented + smoke-tested.**
+  `training/embed_extract.py` + `training/train_head.py` — which consume the
+  `~/genre_training/<genre>/` folders the **✎ override** feature fills — are now
+  first-class: a **Training custom genres** section in the README walks the loop
+  (override → `embed_extract` → `train_head` → restart → the **custom** row) with
+  the guidance the scripts print (~30+ tracks/genre, an `other/` negative class),
+  `training/` is in the project-structure block, and the guide's override section
+  now says what the saved audio is for. A pytest smoke test trains the head on
+  tiny synthetic clusters (asserts val acc > 0.9) and round-trips it through the
+  exact `get_custom_head` load pattern (six arrays + labels, `allow_pickle=False`).
+  `.gitignore` gains `_cache/`, `manifest.json`, `*.npz` as insurance.
 
 ### Changed
 - **Split `static/app.js` (2.7k lines) into three `<script>`-loaded files.** The

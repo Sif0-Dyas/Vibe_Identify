@@ -52,6 +52,9 @@ Genre Identifier/
     static/genre_families.json
   wsgi.py                    ← WSGI entry point for production servers
   tests/                     ← pytest smoke tests (run in FAKE mode)
+  training/                  ← custom-genre head pipeline (see "Training custom genres")
+    embed_extract.py         ← cache EffNet embeddings from ~/genre_training/<genre>/
+    train_head.py            ← train the NumPy MLP → ~/essentia_models/custom_head.npz
   requirements.txt · requirements-dev.txt · pyproject.toml
   .env.example               ← documented environment variables
   CHANGELOG.md · README.md · LICENSE
@@ -63,8 +66,8 @@ Genre Identifier/
 > (`TemplateNotFound`) and 404s `/static/*`.
 
 External, separate from this repo:
-- `embed_extract.py` + `train_head.py` — the custom-head training pipeline.
-- `~/genre_training/<genre>/` — where manual overrides copy tracks for training.
+- `~/genre_training/<genre>/` — where manual overrides copy tracks for training
+  (consumed by the scripts in `training/`).
 - `~/essentia_models/` — downloaded model graphs (+ optional `custom_head.npz`).
 - `~/genre_v2.db` — SQLite cache/vibes/tags (override with env `GENRE_DB`).
 
@@ -121,6 +124,33 @@ address, default `127.0.0.1`), `MAX_UPLOAD_MB` (upload cap, default 512),
 
 The optional custom head (if `custom_head.npz` exists) scores the same
 embeddings — no extra audio decode.
+
+---
+
+## Training custom genres
+
+You can train a small **custom head** on genres you define yourself (e.g. your
+own *Riddim* / *Tearout*). It closes the loop on the override feature — labelling
+tracks in the app produces the training set:
+
+1. **Label in the app.** Use **✎ override** on tracks; each override copies the
+   audio into `~/genre_training/<genre>/`, so those folders accumulate a labelled
+   dataset as you go.
+2. **Extract embeddings.** `python training/embed_extract.py` walks the
+   `<genre>/` folders, runs each track through the same EffNet embedder the app
+   uses, and caches frame embeddings + a `manifest.json` (re-runs only embed new
+   files). Needs the runtime deps (`essentia-tensorflow`).
+3. **Train the head.** `python training/train_head.py` trains a small NumPy MLP
+   (1280 → hidden → K softmax) with a *track-level* train/val split and saves
+   `~/essentia_models/custom_head.npz` in the exact schema the app loads
+   (`vibedentify.analysis.get_custom_head`). NumPy-only.
+4. **Restart the app.** The **custom** row then appears under each analysis,
+   scoring the same embeddings against your genres — no extra audio decode.
+
+Both scripts default to `~/genre_training` and take an optional path argument.
+Follow the guidance they print: aim for **~30+ tracks per genre**, and include an
+`other/` folder of tracks that are *none* of your custom genres — that negative
+class keeps the head from labelling everything as one of your genres.
 
 ---
 
