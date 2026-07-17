@@ -32,6 +32,7 @@
   let mapMode = 'regions';                 // 'regions' | 'galaxy' | 'tree'
   let TREE = null;                         // {nodes, links, rows} for tree mode
   let treeHits = [], hoverGenre = null;    // tree node hit-boxes + hovered node
+  let famLabelHits = [];                   // family-label hit-boxes -> click to fly
   let MAXR = 1;                            // cloud bounding radius (for auto-fit)
   let selHash = null;
   let simCache = [];                       // last popup's /similar result
@@ -65,7 +66,27 @@
     let h = 0; for (let i=0;i<fam.length;i++) h = (h*31 + fam.charCodeAt(i)) | 0;
     return ((h % 360) + 360) % 360;
   }
-  const famCss = fam => `hsl(${hueOf(fam)} 62% 62%)`;
+  // user-customisable per-family base hue (persisted); falls back to the hash hue
+  let FAM_HUE = {};
+  try { FAM_HUE = JSON.parse(localStorage.getItem('vibeFamHue') || '{}') || {}; } catch(_){ FAM_HUE = {}; }
+  const famHue = fam => (FAM_HUE[fam] == null ? hueOf(fam) : FAM_HUE[fam]);
+  const famCss = fam => `hsl(${famHue(fam)} 62% 62%)`;
+  function hexToHue(hex){
+    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || '');
+    if (!m) return null;
+    const r = parseInt(m[1],16)/255, g = parseInt(m[2],16)/255, b = parseInt(m[3],16)/255;
+    const mx = Math.max(r,g,b), mn = Math.min(r,g,b), d = mx-mn;
+    if (d === 0) return 0;
+    let h; if (mx===r) h = ((g-b)/d) % 6; else if (mx===g) h = (b-r)/d + 2; else h = (r-g)/d + 4;
+    return ((h*60) % 360 + 360) % 360;
+  }
+  function hslHex(h, s, l){                          // for seeding the colour picker
+    s/=100; l/=100;
+    const k = n => (n + h/30) % 12, a = s*Math.min(l, 1-l);
+    const f = n => l - a*Math.max(-1, Math.min(k(n)-3, Math.min(9-k(n), 1)));
+    const to = x => Math.round(x*255).toString(16).padStart(2,'0');
+    return `#${to(f(0))}${to(f(8))}${to(f(4))}`;
+  }
   // deterministic 0..1 hash of a string
   function hash01(s){ let h = 0; for (let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i)) | 0;
     return (((h % 4096) + 4096) % 4096) / 4096; }
@@ -74,14 +95,20 @@
   // out distinct but kin, so a family cluster shows its internal groupings even
   // from afar. Returns {h, s, dl} (hue, saturation, lightness delta).
   function styleShade(fam, style){
-    const base = hueOf(fam);
+    const base = famHue(fam);
     if (!style || style === fam) return { h: base, s: 64, dl: 0 };
     const r = hash01(style + '|' + fam);
     return {
-      h: ((base + (r*2 - 1)*26) % 360 + 360) % 360,   // family hue +/- 26 degrees
-      s: 54 + Math.floor(hash01('s' + style) * 26),   // 54..80
-      dl: (hash01('l' + style)*2 - 1) * 9,            // +/- 9 lightness
+      h: ((base + (r*2 - 1)*36) % 360 + 360) % 360,   // family hue +/- 36 degrees
+      s: 48 + Math.floor(hash01('s' + style) * 38),   // 48..86 (wide, for shade contrast)
+      dl: (hash01('l' + style)*2 - 1) * 15,           // +/- 15 lightness
     };
+  }
+  // blend shade b into a by t (0..1); hue interpolated along the short arc so a
+  // mixed track lands *between* its two genres' colours ("colour matching").
+  function mixShade(a, b, t){
+    const d = ((b.h - a.h) % 360 + 540) % 360 - 180;
+    return { h: ((a.h + d*t) % 360 + 360) % 360, s: a.s + (b.s-a.s)*t, dl: a.dl + (b.dl-a.dl)*t };
   }
   const durfmt = s => { if (s==null) return '--'; s=Math.round(s);
     return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); };
@@ -115,8 +142,12 @@
     byHash.clear();
     for (const n of NODES){
       n.fam = familyOf(n.style || n.styles[0] || 'Other') || 'Other';
-      const sh = styleShade(n.fam, n.style || n.styles[0]);
-      n.hue = sh.h; n.sat = sh.s; n.dl = sh.dl;   // shade of the family colour, per subgenre
+      let sh = styleShade(n.fam, n.style || n.styles[0]);   // per-subgenre shade of the family
+      if (n.mix && n.mix[1] > 0.02){                        // lean toward the 2nd genre by its %
+        const f2 = familyOf(n.mix[0]) || n.fam;
+        sh = mixShade(sh, styleShade(f2, n.mix[0]), Math.min(0.5, n.mix[1]));
+      }
+      n.hue = sh.h; n.sat = sh.s; n.dl = sh.dl;
       byHash.set(n.hash, n);
     }
     COUNTS = {};
@@ -246,11 +277,14 @@
 
   function buildLegend(){
     legendEl.innerHTML = FAMS.map(f =>
-      `<span class="leg" data-fam="${escapeHtml(f)}"><span class="dot" style="background:${famCss(f)}"></span>${escapeHtml(f)} ${COUNTS[f]}</span>`
+      `<span class="leg" data-fam="${escapeHtml(f)}"><span class="dot" title="click the dot to recolour this genre" style="background:${famCss(f)}"></span>${escapeHtml(f)} ${COUNTS[f]}</span>`
     ).join('');
-    // click a legend chip to filter to that genre (click again to clear)
-    legendEl.querySelectorAll('.leg').forEach(el =>
-      el.onclick = () => { const f = el.getAttribute('data-fam'); applyFilter(filterFam === f ? null : f); });
+    // click the dot -> recolour the genre; click the chip -> filter (toggle)
+    legendEl.querySelectorAll('.leg').forEach(el => {
+      const f = el.getAttribute('data-fam');
+      el.querySelector('.dot').onclick = ev => { ev.stopPropagation(); pickFamColor(f, ev.currentTarget); };
+      el.onclick = () => applyFilter(filterFam === f ? null : f);
+    });
     // (re)populate the filter dropdown, preserving the current choice
     const fe = document.getElementById('map-filter');
     if (fe){
@@ -260,6 +294,29 @@
         + FAMS.map(f => `<option value="${escapeHtml(f)}">${escapeHtml(f)} · ${COUNTS[f]}</option>`).join('');
       fe.value = (cur === '__flagged__' || FAMS.includes(cur)) ? cur : '';
     }
+  }
+
+  // recolour a whole genre family (and its subgenre shades) via a native colour
+  // picker; the choice persists in localStorage and re-applies on load.
+  let _famPicker = null;
+  function pickFamColor(fam, anchor){
+    if (!_famPicker){
+      _famPicker = document.createElement('input');
+      _famPicker.type = 'color';
+      _famPicker.style.cssText = 'position:fixed;width:0;height:0;opacity:0;border:0;padding:0;pointer-events:none';
+      document.body.appendChild(_famPicker);
+    }
+    _famPicker.value = hslHex(famHue(fam), 62, 62);   // seed with the current colour
+    _famPicker.oninput = () => {
+      const hue = hexToHue(_famPicker.value);
+      if (hue == null) return;
+      FAM_HUE[fam] = Math.round(hue);
+      try{ localStorage.setItem('vibeFamHue', JSON.stringify(FAM_HUE)); }catch(_){ /* private mode */ }
+      if (NODES.length) layout();                     // recompute node shades + legend
+    };
+    const r = anchor.getBoundingClientRect();
+    _famPicker.style.left = r.left + 'px'; _famPicker.style.top = r.bottom + 'px';
+    _famPicker.click();
   }
 
   /* ---- organic left-to-right genre tree (root -> families -> subgenres) ---
@@ -334,7 +391,7 @@
       ctx.beginPath(); ctx.moveTo(x1,y1); ctx.bezierCurveTo(mx,y1,mx,y2,x2,y2); ctx.stroke();
     }
     // nodes + labels
-    proj.clear(); treeHits = [];
+    proj.clear(); treeHits = []; famLabelHits = [];
     ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
     for (const nd of TREE.nodes){
       if (!show(nd.fam)) continue;
@@ -504,15 +561,22 @@
       spread /= fl.length;
       if (spread < 90){
         // tight ball (galaxy): centroid *direction* is basically noise, so ring
-        // the labels evenly by angle around the cluster (elliptical: wider than
-        // tall to fit long names), each tied back to the ball by a leader line.
+        // the labels evenly by angle around the cluster, each tied back by a
+        // leader line. The ring radius tracks the ball's ON-SCREEN size (+margin)
+        // so labels always clear the cloud instead of overlapping it when the
+        // ball is large (e.g. zoomed out at the fit view).
+        let ballR = 0;
+        { const ds = []; for (const [, pp] of proj) ds.push(Math.hypot(pp.sx-cx0, pp.sy-cy0));
+          ballR = pctl(ds, 0.9); }
         const arr = fl.slice().sort((a,b) =>
           Math.atan2(a.ay-cy0, a.ax-cx0) - Math.atan2(b.ay-cy0, b.ax-cx0));
-        const N = arr.length, R = Math.max(150, N*9);
+        const N = arr.length;
+        const Rx = Math.max(180, ballR*1.18 + 62, N*8);   // wider: room for long names
+        const Ry = Math.max(150, ballR*1.06 + 50);        // tall enough to clear the ball
         for (let i=0; i<N; i++){
           const ang = (i/N)*6.2832 - 1.5708;            // start at top, go clockwise
-          arr[i].lx = cx0 + Math.cos(ang)*R;
-          arr[i].ly = cy0 + Math.sin(ang)*R*0.72;
+          arr[i].lx = cx0 + Math.cos(ang)*Rx;
+          arr[i].ly = cy0 + Math.sin(ang)*Ry;
         }
       } else {
         // spread map (regions): nudge a hair so labels stay on their centroids.
@@ -541,11 +605,12 @@
     for (const l of fl){
       if (Math.hypot(l.lx-l.ax, l.ly-l.ay) > 4){        // pulled away -> leader line
         ctx.lineWidth = 1;
-        ctx.strokeStyle = `hsla(${hueOf(l.f)} 62% 62% / ${clamp(0.65*l.alpha+0.2, 0, 0.75)})`;
+        ctx.strokeStyle = `hsla(${famHue(l.f)} 62% 62% / ${clamp(0.65*l.alpha+0.2, 0, 0.75)})`;
         ctx.beginPath(); ctx.moveTo(l.ax, l.ay); ctx.lineTo(l.lx, l.ly); ctx.stroke();
       }
       drawLabel(l.f.toUpperCase(), {sx:l.lx, sy:l.ly},
         `800 ${l.fs}px Syne, sans-serif`, `rgba(233,238,247,${l.alpha})`);
+      famLabelHits.push({ f:l.f, cx:l.lx, cy:l.ly, hw:l.hw, hh:l.hh });   // click -> fly here
     }
     // subgenre labels -- shown only inside the focused cluster(s), coloured as a
     // shade of the family so they read as "part of" it. Drawn far -> near.
@@ -667,6 +732,9 @@
     if (!moved && !wasPanning){                     // treat as click -> hit test
       const r = canvas.getBoundingClientRect();
       const mx = e.clientX-r.left, my = e.clientY-r.top;
+      for (const g of famLabelHits){                // a genre label -> fly to its cluster
+        if (Math.abs(mx-g.cx) <= g.hw && Math.abs(my-g.cy) <= g.hh+4){ focusFamily(g.f); return; }
+      }
       let best=null, bz=-Infinity;
       for (const [h,p] of proj){
         if (Math.hypot(mx-p.sx, my-p.sy) <= p.r+5 && p.z>bz){ bz=p.z; best=h; }
@@ -767,6 +835,7 @@
     }catch(_){ /* still relabel locally */ }
     n.style = genre;
     n.fam = familyOf(genre) || 'Other';
+    n.mix = null;                          // manual override -> pure genre, no blend
     const sh = styleShade(n.fam, genre);
     n.hue = sh.h; n.sat = sh.s; n.dl = sh.dl;
     n.flag = false; n.suggest = null;

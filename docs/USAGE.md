@@ -154,10 +154,13 @@ You can **orbit** (rotate), **pan** (slide), and **zoom** independently. A small
 ### Map controls
 
 - **Search** — jump to any track, artist, or genre.
+- **Click a genre name** on the map to fly the camera to that cluster.
 - **🎧 harmonic** — highlight what you could mix next (see section 8).
 - **≈ edges** — show or hide the connecting lines.
-- **Genre filter** — a dropdown (and the clickable color legend) to show just one genre, or just the **⚠ likely misreads**.
+- **Genre filter** — a dropdown (and the color legend) to show just one genre, or just the **⚠ likely misreads**. In the legend, **click a genre's text** to filter to it and **click its color dot** to recolor that genre (your colors are remembered).
 - **fit** — reset the view and clear any filter.
+
+Each track's dot is a **shade of its genre's color** keyed to its subgenre, and leans toward its second-closest genre's color — so a big cluster visibly shows the subgenres inside it, and tracks that sit between two genres get a blended, in-between color.
 
 You can also share a view: the address bar updates as you go (`#map`, `#galaxy`, `#review`), so those links reopen the same place.
 

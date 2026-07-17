@@ -627,6 +627,22 @@ def _dominant_style(payload):
     return None, 0.0
 
 
+def _second_style(payload, top_style, top_score):
+    """The runner-up style + its weight relative to the top read, for colour
+    blending on the map (a track that's partly a 2nd genre leans toward its
+    colour). Returns [style2, weight2] with weight2 in [0, 0.5], or None when
+    there's an override or no distinct runner-up."""
+    if payload.get("override"):
+        return None
+    ranked = payload.get("salience") or payload.get("styles") or []
+    for s in ranked:
+        st, sc = s.get("style"), float(s.get("score", 0) or 0)
+        if st and st != top_style and sc > 0:
+            denom = (top_score or 0) + sc
+            return [st, round(sc / denom, 3) if denom else 0.0]
+    return None
+
+
 def _map_node(h, title, filename, payload):
     p = payload if isinstance(payload, dict) else json.loads(payload)
     style, score = _dominant_style(p)
@@ -637,6 +653,7 @@ def _map_node(h, title, filename, payload):
         "style": style,
         "score": score,
         "styles": [s.get("style") for s in (p.get("styles") or [])[:3]],
+        "mix": _second_style(p, style, score),  # [style2, weight2] for colour blend
         "bpm": p.get("bpm"),
         "key": p.get("key"),
         "scale": p.get("scale"),

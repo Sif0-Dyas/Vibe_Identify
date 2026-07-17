@@ -56,6 +56,11 @@ _Work in progress lands here, then gets stamped with a version + date on release
   **⚠ sounds like &lt;X&gt;** hint on list rows that prefills the override.
   `/analyze` also attaches the flag to each new read (`vibedentify/insight.py`;
   thresholds conf < 0.55, agree ≥ 0.60, sim ≥ 0.80, k=8 → ~5% flag rate).
+- **Map: click a genre name to fly to its cluster, and recolour genres.**
+  Clicking a family label on the map now flies the camera to that cluster.
+  Clicking a legend entry's **colour dot** opens a picker to recolour that whole
+  genre (and its subgenre shades); the choice persists in `localStorage` and
+  re-applies on load. Clicking the legend **text** still filters as before.
 - **Omit / forget a track.** New `POST /forget/<hash>` deletes a track's analysis
   (cache + map + vibe/tag membership; the audio file is untouched). Exposed as
   **✕ omit** on each list row and **omit from library** in the map popup.
@@ -101,15 +106,19 @@ _Work in progress lands here, then gets stamped with a version + date on release
 ### Changed
 - **Map: subgenre colours + spatial, per-cluster label detail.** Each node is now
   a distinct *shade* of its family's colour keyed to its subgenre (family hue
-  ±26° plus a small saturation/lightness wobble), so a big single-genre cluster
-  (e.g. Bass Music) visibly shows its internal groupings even from afar instead of
-  reading as one flat colour. Label level-of-detail is now **per-family and
+  ±36° plus a wide saturation/lightness wobble), and it **leans toward its 2nd
+  genre's colour** by that genre's relative weight (`GET /map` now returns a
+  `mix` field), so a big single-genre cluster (e.g. Bass Music) visibly shows its
+  internal groupings even from afar, and tracks between two genres get a blended,
+  matching colour. Label level-of-detail is now **per-family and
   spatial**: as you zoom toward a cluster, *its* family label fades out and its
   subgenre labels fade in (as bright shades of the family), while clusters off to
   the side keep their family label and stay coarse — so being deep in one cluster
   reveals its subgenres without lighting up the whole map, and the other clusters
   stay identifiable. Subgenres also surface at a lower zoom than before, and the
-  tree view's subgenre nodes get the same family-shade colours.
+  tree view's subgenre nodes get the same family-shade colours. In **galaxy**, the
+  ring of family labels now sizes itself to the ball's on-screen radius, so the
+  labels clear the cloud instead of overlapping it when zoomed out.
 - **Split `static/app.js` (2.7k lines) into three `<script>`-loaded files.** The
   3-D Genre Map moved to `static/map.js` and the row audio player to
   `static/player.js`; `static/app.js` keeps the rest (rows, lenses, vibes, tags,
