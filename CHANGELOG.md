@@ -56,15 +56,17 @@ _Work in progress lands here, then gets stamped with a version + date on release
   **⚠ sounds like &lt;X&gt;** hint on list rows that prefills the override.
   `/analyze` also attaches the flag to each new read (`vibedentify/insight.py`;
   thresholds conf < 0.55, agree ≥ 0.60, sim ≥ 0.80, k=8 → ~5% flag rate).
-- **Map: click a genre name to fly to & orbit its cluster; hierarchical legend;
-  recolour genres.** Clicking a family label flies the camera to that cluster and
-  now **orbits around the cluster's centre** (a family pivot) instead of the
-  origin, so the cluster stays framed while the rest rotates. The genre legend is
-  a **collapsible, scrollable panel** that groups each overarching genre with its
-  subgenres beneath it (indented, in their shade colours) so the hierarchy is
-  clear. Clicking a legend entry's **colour dot** opens a picker to recolour that
-  whole genre (and its subgenre shades), persisted in `localStorage`; clicking the
-  genre **text** filters as before.
+- **Map: click a genre/subgenre to fly to & orbit its cluster; hierarchical
+  legend; recolour genres.** Clicking a **genre** (its map label, or its name in
+  the legend) flies the camera to that cluster and **orbits around the cluster's
+  centre** (a pivot) instead of the origin, so it stays framed while the rest
+  rotates. Clicking a **subgenre** (its map label, or its entry in the legend)
+  does the same for that sub-cluster (centroid computed on demand, so it works in
+  any layout). The genre legend is a **collapsible, scrollable panel** that groups
+  each overarching genre with its subgenres beneath it (indented, in their shade
+  colours) so the hierarchy is clear. Clicking a legend entry's **colour dot**
+  opens a picker to recolour that whole genre (and its subgenre shades), persisted
+  in `localStorage`. (Filtering to a single genre stays on the top-bar dropdown.)
 - **Omit / forget a track.** New `POST /forget/<hash>` deletes a track's analysis
   (cache + map + vibe/tag membership; the audio file is untouched). Exposed as
   **✕ omit** on each list row and **omit from library** in the map popup.

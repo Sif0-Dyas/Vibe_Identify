@@ -931,7 +931,9 @@ body.view-guide .lensbar{ display:none; }
 .leg-sub{
   display:flex; align-items:center; gap:4px; white-space:nowrap;
   font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--dim);
+  cursor:pointer; padding:0 2px; border-radius:3px;
 }
+.leg-sub:hover{ color:var(--text); background:rgba(255,255,255,.06); }
 .leg-sub .sdot{ width:6px; height:6px; border-radius:50%; flex:0 0 auto; }
 .leg-more{ font-size:9px; color:#7a8496; align-self:center; }
 

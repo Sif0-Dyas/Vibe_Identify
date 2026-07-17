@@ -33,6 +33,7 @@
   let TREE = null;                         // {nodes, links, rows} for tree mode
   let treeHits = [], hoverGenre = null;    // tree node hit-boxes + hovered node
   let famLabelHits = [];                   // family-label hit-boxes -> click to fly
+  let styleLabelHits = [];                 // subgenre-label hit-boxes -> click to fly
   let MAXR = 1;                            // cloud bounding radius (for auto-fit)
   let selHash = null;
   let simCache = [];                       // last popup's /similar result
@@ -295,7 +296,8 @@
       const subHtml = shown.map(([st, c]) => {
         const sh = styleShade(f, st);
         const col = `hsl(${sh.h} ${clamp(sh.s, 40, 88)}% ${clamp(58 + sh.dl, 44, 70)}%)`;
-        return `<span class="leg-sub"><span class="sdot" style="background:${col}"></span>${escapeHtml(st)} ${c}</span>`;
+        return `<span class="leg-sub" data-fam="${escapeHtml(f)}" data-style="${escapeHtml(st)}"`
+          + ` title="zoom to ${escapeHtml(st)}"><span class="sdot" style="background:${col}"></span>${escapeHtml(st)} ${c}</span>`;
       }).join('') + (more > 0 ? `<span class="leg-more">+${more} more</span>` : '');
       return `<div class="leg-group">${head}<div class="leg-subs">${subHtml}</div></div>`;
     }).join('');
@@ -308,12 +310,15 @@
       legendEl.classList.toggle('collapsed', legendCollapsed);
       try{ localStorage.setItem('vibeLegend', legendCollapsed ? 'off' : 'on'); }catch(_){ /* private */ }
     };
-    // click the dot -> recolour that genre; click the header -> filter (toggle)
+    // click a family header -> zoom to that genre; its dot -> recolour it;
+    // click a subgenre -> zoom to that sub-cluster
     legendEl.querySelectorAll('.leg-fam').forEach(el => {
       const f = el.getAttribute('data-fam');
       el.querySelector('.dot').onclick = ev => { ev.stopPropagation(); pickFamColor(f, ev.currentTarget); };
-      el.onclick = () => applyFilter(filterFam === f ? null : f);
+      el.onclick = () => focusFamily(f);
     });
+    legendEl.querySelectorAll('.leg-sub').forEach(el =>
+      el.onclick = () => focusStyle(el.getAttribute('data-fam'), el.getAttribute('data-style')));
     // (re)populate the filter dropdown, preserving the current choice
     const fe = document.getElementById('map-filter');
     if (fe){
@@ -420,7 +425,7 @@
       ctx.beginPath(); ctx.moveTo(x1,y1); ctx.bezierCurveTo(mx,y1,mx,y2,x2,y2); ctx.stroke();
     }
     // nodes + labels
-    proj.clear(); treeHits = []; famLabelHits = [];
+    proj.clear(); treeHits = []; famLabelHits = []; styleLabelHits = [];
     ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
     for (const nd of TREE.nodes){
       if (!show(nd.fam)) continue;
@@ -660,15 +665,19 @@
         const a = (0.62 + 0.38*depth) * clamp(focus*1.5, 0, 1);
         if (a < 0.03) continue;
         const sh = styleShade(fam, c.style);
-        subs.push({ p, depth, text: c.style.toUpperCase(),
-          fs: Math.min(22, 11 + c.n*0.4) * clamp(p.persp, 0.85, 1.3),
+        const fs = Math.min(22, 11 + c.n*0.4) * clamp(p.persp, 0.85, 1.3);
+        ctx.font = `700 ${fs}px 'JetBrains Mono', monospace`;
+        subs.push({ p, depth, fam, style: c.style, text: c.style.toUpperCase(), fs,
+          hw: ctx.measureText(c.style.toUpperCase()).width/2 + 4, hh: fs*0.6,
           // bright, high-lightness tint of the family hue so it reads over the
           // similarly-hued nodes (the dark halo in drawLabel does the rest).
           col: `hsla(${sh.h} ${clamp(sh.s+20, 55, 96)}% ${clamp(82 + sh.dl*0.5, 74, 90)}% / ${a})` });
       }
       subs.sort((x,y) => x.depth - y.depth);
-      for (const s of subs)
+      for (const s of subs){
         drawLabel(s.text, s.p, `700 ${s.fs}px 'JetBrains Mono', monospace`, s.col);
+        styleLabelHits.push({ fam:s.fam, style:s.style, cx:s.p.sx, cy:s.p.sy, hw:s.hw, hh:s.hh });
+      }
     }
 
     // nodes far -> near
@@ -738,10 +747,12 @@
       if (tipEl && !tipEl.hidden) tipEl.hidden = true;
       return;
     }
-    // hover tooltip: nearest node under the cursor
+    // hover: a node -> tooltip; a clickable genre/subgenre label -> pointer cursor
     if (!tipEl) return;
     const r = canvas.getBoundingClientRect();
     const mx = e.clientX-r.left, my = e.clientY-r.top;
+    const onLabel = g => Math.abs(mx-g.cx) <= g.hw && Math.abs(my-g.cy) <= g.hh+4;
+    const overLabel = styleLabelHits.some(onLabel) || famLabelHits.some(onLabel);
     let best=null, bz=-Infinity;
     for (const [, p] of proj){
       if (Math.hypot(mx-p.sx, my-p.sy) <= p.r+4 && p.z>bz){ bz=p.z; best=p; }
@@ -754,7 +765,10 @@
       tipEl.style.top  = (my+14)+'px';
       tipEl.hidden = false;
       canvas.style.cursor = 'pointer';
-    } else if (!tipEl.hidden){ tipEl.hidden = true; canvas.style.cursor = ''; }
+    } else {
+      if (!tipEl.hidden) tipEl.hidden = true;
+      canvas.style.cursor = overLabel ? 'pointer' : '';
+    }
   });
   canvas.addEventListener('pointerleave', () => { if (tipEl) tipEl.hidden = true; hoverGenre = null; });
   const endDrag = e => { dragging=false; canvas.classList.remove('grabbing','panning');
@@ -765,6 +779,9 @@
     if (!moved && !wasPanning){                     // treat as click -> hit test
       const r = canvas.getBoundingClientRect();
       const mx = e.clientX-r.left, my = e.clientY-r.top;
+      for (const g of styleLabelHits){              // a subgenre label -> fly to its sub-cluster
+        if (Math.abs(mx-g.cx) <= g.hw && Math.abs(my-g.cy) <= g.hh+4){ focusStyle(g.fam, g.style); return; }
+      }
       for (const g of famLabelHits){                // a genre label -> fly to its cluster
         if (Math.abs(mx-g.cx) <= g.hw && Math.abs(my-g.cy) <= g.hh+4){ focusFamily(g.f); return; }
       }
@@ -990,6 +1007,19 @@
     const ry = Math.atan2(-c.x, c.z), rx = Math.atan2(c.y, Math.hypot(c.x, c.z));
     anim = { f:{rx:rot.x,ry:rot.y,z:view.zoom,px:view.panx,py:view.pany},
              t:{rx, ry, z:2.0, px:0, py:0}, t0:performance.now(), dur:640 };
+  }
+  function focusStyle(fam, style){    // fly to & orbit ONE subgenre's sub-cluster
+    let x=0, y=0, z=0, c=0;           // centroid computed on demand -> works in any layout
+    for (const n of NODES){
+      if (n.fam === fam && (n.style || n.fam) === style){ x+=n.x3; y+=n.y3; z+=n.z3; c++; }
+    }
+    if (!c) return;
+    const cen = { x:x/c, y:y/c, z:z/c };
+    closePopup();
+    famPivot = cen;                   // orbit around the subgenre sub-cluster
+    const ry = Math.atan2(-cen.x, cen.z), rx = Math.atan2(cen.y, Math.hypot(cen.x, cen.z));
+    anim = { f:{rx:rot.x,ry:rot.y,z:view.zoom,px:view.panx,py:view.pany},
+             t:{rx, ry, z:2.8, px:0, py:0}, t0:performance.now(), dur:640 };   // tighter zoom
   }
   function applyFilter(fam){          // null = show all genres
     flaggedOnly = false;

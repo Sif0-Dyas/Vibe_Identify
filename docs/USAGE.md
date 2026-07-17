@@ -154,10 +154,11 @@ You can **orbit** (rotate), **pan** (slide), and **zoom** independently. A small
 ### Map controls
 
 - **Search** — jump to any track, artist, or genre.
-- **Click a genre name** on the map to fly to that cluster and orbit around it.
+- **Click a genre or subgenre name** — on the map, or in the legend — to fly to that cluster and orbit around it (subgenres zoom in a little tighter than their overarching genre).
 - **🎧 harmonic** — highlight what you could mix next (see section 8).
 - **≈ edges** — show or hide the connecting lines.
-- **Genre legend** *(bottom-left, collapsible)* — groups each **overarching genre** with its **subgenres** beneath it (in their shade colors), so you can see the hierarchy. **Click a genre's text** to filter to it, or **click its color dot** to recolor that genre (your colors are remembered). The genre **filter dropdown** at the top does the same filtering, or shows just the **⚠ likely misreads**.
+- **Genre legend** *(bottom-left, collapsible)* — groups each **overarching genre** with its **subgenres** beneath it (in their shade colors), so you can see the hierarchy. Click a genre or subgenre **name** to fly to it; click a genre's **color dot** to recolor it (your colors are remembered).
+- **Genre filter** *(top-bar dropdown)* — show just one genre, or just the **⚠ likely misreads**.
 - **fit** — reset the view and clear any filter.
 
 Each track's dot is a **shade of its genre's color** keyed to its subgenre, and leans toward its second-closest genre's color — so a big cluster visibly shows the subgenres inside it, and tracks that sit between two genres get a blended, in-between color.
