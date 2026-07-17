@@ -614,8 +614,12 @@
         const arr = fl.slice().sort((a,b) =>
           Math.atan2(a.ay-cy0, a.ax-cx0) - Math.atan2(b.ay-cy0, b.ax-cx0));
         const N = arr.length;
-        const Rx = Math.max(210, ballR*1.32 + 90, N*8);   // wider: room for long names
-        const Ry = Math.max(180, ballR*1.22 + 78);        // tall enough to clear the ball
+        // push the ring out toward the viewport edges -- there's usually far more
+        // empty space out there than the ball needs -- but never less than a clean
+        // clearance of the ball. Labels are clamped on-screen after relaxation.
+        const availX = Math.min(cx0, W - cx0), availY = Math.min(cy0, H - cy0);
+        const Rx = Math.max(210, ballR*1.32 + 90, N*8, availX * 0.82);
+        const Ry = Math.max(180, ballR*1.22 + 78, availY * 0.82);
         for (let i=0; i<N; i++){
           const ang = (i/N)*6.2832 - 1.5708;            // start at top, go clockwise
           arr[i].lx = cx0 + Math.cos(ang)*Rx;
@@ -643,6 +647,10 @@
         }
       }
       if (!moved) break;
+    }
+    for (const l of fl){                                // keep every label fully on-screen
+      l.lx = clamp(l.lx, l.hw + 6, W - l.hw - 6);
+      l.ly = clamp(l.ly, l.hh + 6, H - l.hh - 6);
     }
     ctx.textAlign = 'center';
     for (const l of fl){
