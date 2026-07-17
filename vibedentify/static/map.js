@@ -779,17 +779,21 @@
     if (!moved && !wasPanning){                     // treat as click -> hit test
       const r = canvas.getBoundingClientRect();
       const mx = e.clientX-r.left, my = e.clientY-r.top;
-      for (const g of styleLabelHits){              // a subgenre label -> fly to its sub-cluster
-        if (Math.abs(mx-g.cx) <= g.hw && Math.abs(my-g.cy) <= g.hh+4){ focusStyle(g.fam, g.style); return; }
-      }
-      for (const g of famLabelHits){                // a genre label -> fly to its cluster
-        if (Math.abs(mx-g.cx) <= g.hw && Math.abs(my-g.cy) <= g.hh+4){ focusFamily(g.f); return; }
-      }
+      // a dot under the cursor wins -> select it + open the popup (the precise
+      // target; labels overlap dense clusters, so they must NOT pre-empt this).
       let best=null, bz=-Infinity;
       for (const [h,p] of proj){
         if (Math.hypot(mx-p.sx, my-p.sy) <= p.r+5 && p.z>bz){ bz=p.z; best=h; }
       }
-      if (best) selectNode(best); else closePopup();
+      if (best){ selectNode(best); return; }
+      // otherwise a subgenre / genre label -> fly to that cluster
+      for (const g of styleLabelHits){
+        if (Math.abs(mx-g.cx) <= g.hw && Math.abs(my-g.cy) <= g.hh+4){ focusStyle(g.fam, g.style); return; }
+      }
+      for (const g of famLabelHits){
+        if (Math.abs(mx-g.cx) <= g.hw && Math.abs(my-g.cy) <= g.hh+4){ focusFamily(g.f); return; }
+      }
+      closePopup();
     }
   });
   canvas.addEventListener('pointercancel', endDrag);
