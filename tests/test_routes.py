@@ -6,6 +6,7 @@ an empty temp DB (see conftest.py).
 """
 
 import io
+import json
 import struct
 import wave
 
@@ -136,6 +137,126 @@ def test_artist_prefers_metadata_tag():
     assert _artist_of({"tags": {"tag": {"albumartist": "V/A"}}}, "Some Title", "x.mp3") == "V/A"
     # nothing available -> empty (not a crash)
     assert _artist_of({}, "Just A Title", "x.mp3") == ""
+
+
+def test_batch_analyzes_folder_and_caches(client, tmp_path):
+    # a server-side folder of tiny audio files -> an NDJSON stream: a `total`
+    # line, then one result per file; a re-run returns every file from cache.
+    for name in ("a.wav", "b.wav", "c.wav"):
+        (tmp_path / name).write_bytes(_tiny_wav_bytes())
+
+    def run():
+        r = client.post("/batch", json={"path": str(tmp_path)})
+        assert r.status_code == 200
+        return [json.loads(x) for x in r.data.decode().splitlines() if x.strip()]
+
+    lines = run()
+    assert lines[0] == {"total": 3}
+    results = lines[1:]
+    assert len(results) == 3
+    assert all(r["ok"] for r in results)
+    assert all(r["cached"] is False for r in results)  # first pass: freshly analyzed
+    assert all(r.get("hash") for r in results)
+
+    again = run()  # same content hashes -> all cache hits
+    assert again[0] == {"total": 3}
+    assert all(r["cached"] is True for r in again[1:])
+
+
+def test_batch_missing_dir_400(client):
+    assert client.post("/batch", json={"path": "/no/such/dir"}).status_code == 400
+
+
+def test_compare_fake_shape(client):
+    # FAKE mode returns canned EffNet-vs-MAEST pairs without running a model.
+    r = client.post("/compare")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["maest_available"] is True
+    assert isinstance(body["pairs"], list) and body["pairs"]
+    for p in body["pairs"]:
+        for key in ("parent", "style", "eff", "mae"):
+            assert key in p
+
+
+def test_map_populated(client):
+    # analyze a few tracks, then the map returns them as nodes; every edge only
+    # ever references a real node hash.
+    hashes = []
+    for name in ("m1.wav", "m2.wav", "m3.wav"):
+        data = {"file": (io.BytesIO(_tiny_wav_bytes()), name)}
+        h = client.post("/analyze", data=data, content_type="multipart/form-data").get_json()[
+            "hash"
+        ]
+        hashes.append(h)
+
+    body = client.get("/map").get_json()
+    node_hashes = {n["hash"] for n in body["nodes"]}
+    assert set(hashes) <= node_hashes
+    for n in body["nodes"]:
+        assert n["style"] and "bpm" in n
+    for e in body["edges"]:
+        assert e["a"] in node_hashes and e["b"] in node_hashes
+        assert isinstance(e["sim"], (int, float))
+
+
+def test_vibe_lifecycle(client):
+    # create a vibe, add a track, weight it (Rocchio), read members, remove, read.
+    data = {"file": (io.BytesIO(_tiny_wav_bytes()), "vibe.wav")}
+    h = client.post("/analyze", data=data, content_type="multipart/form-data").get_json()["hash"]
+
+    vid = client.post("/vibes", json={"name": "Peak Time"}).get_json()["id"]
+    assert client.post("/vibes/add", json={"vibe_id": vid, "hash": h}).get_json()["added"] is True
+
+    r = client.post("/vibes/weight", json={"vibe_id": vid, "hash": h, "weight": 0.5})
+    assert r.get_json()["weight"] == 0.5
+    # weight clamps to [-1, 1]
+    clamped = client.post("/vibes/weight", json={"vibe_id": vid, "hash": h, "weight": 5})
+    assert clamped.get_json()["weight"] == 1.0
+
+    members = client.get(f"/vibes/{vid}/members").get_json()
+    assert len(members) == 1
+    assert members[0]["hash"] == h and members[0]["weight"] == 1.0
+
+    assert (
+        client.post("/vibes/remove", json={"vibe_id": vid, "hash": h}).get_json()["removed"] is True
+    )
+    assert client.get(f"/vibes/{vid}/members").get_json() == []
+
+
+def test_similar_returns_neighbors(client):
+    hashes = []
+    for name in ("s1.wav", "s2.wav", "s3.wav"):
+        data = {"file": (io.BytesIO(_tiny_wav_bytes()), name)}
+        hashes.append(
+            client.post("/analyze", data=data, content_type="multipart/form-data").get_json()[
+                "hash"
+            ]
+        )
+    body = client.get(f"/similar/{hashes[0]}?k=5").get_json()
+    assert isinstance(body, list)
+    for row in body:
+        assert row["hash"] in set(hashes) and row["hash"] != hashes[0]  # excludes self
+        assert "sim" in row
+
+
+def test_vibe_match_and_playlist(client):
+    data = {"file": (io.BytesIO(_tiny_wav_bytes()), "vm.wav")}
+    h = client.post("/analyze", data=data, content_type="multipart/form-data").get_json()["hash"]
+    vid = client.post("/vibes", json={"name": "V"}).get_json()["id"]
+    client.post("/vibes/add", json={"vibe_id": vid, "hash": h})
+    # match: the track scored against every vibe's centroid
+    m = client.get(f"/vibes/match/{h}").get_json()
+    assert any(x["id"] == vid and "sim" in x for x in m)
+    # playlist: whole-DB ranking vs the vibe centroid (the lone member scores ~1.0)
+    pl = client.get(f"/vibes/{vid}/playlist").get_json()
+    assert isinstance(pl, list) and any(row["hash"] == h for row in pl)
+
+
+def test_vibe_routes_require_fields(client):
+    assert client.post("/vibes/add", json={}).status_code == 400
+    assert client.post("/vibes/weight", json={"vibe_id": 1}).status_code == 400
+    assert client.post("/vibes/remove", json={}).status_code == 400
 
 
 def test_misread_flag_logic():

@@ -23,7 +23,7 @@ jobs:
         # lazily inside functions and the test suite runs in FAKE_ANALYZER mode,
         # so the models are never loaded. Installing it (large, niche wheels)
         # would only slow CI down without exercising any extra code path.
-        run: pip install flask mutagen numpy pytest ruff bandit pip-audit
+        run: pip install flask mutagen numpy pytest pytest-cov ruff bandit pip-audit
 
       - name: Lint (ruff)
         run: |
@@ -56,5 +56,10 @@ jobs:
           npm ci
           npx eslint vibedentify/static/
 
-      - name: Test (pytest)
-        run: pytest -q
+      - name: Test (pytest + coverage floor)
+        # FAKE_ANALYZER keeps the model/inference path out of CI; the 50% floor
+        # is set below full coverage on purpose, since analysis.py's real-analysis
+        # path legitimately can't run here.
+        env:
+          FAKE_ANALYZER: "1"
+        run: pytest -q --cov=vibedentify --cov-fail-under=50

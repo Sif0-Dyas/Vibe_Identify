@@ -80,6 +80,12 @@ _Work in progress lands here, then gets stamped with a version + date on release
   earned its keep by flagging dead helpers (`roundRect`, `disp`, `total`,
   `identityMode`), now removed, and a stale comment ESLint read as a `/* global */`
   directive.
+- **CI: coverage floor (`pytest-cov`).** The pytest step now enforces
+  `--cov=vibedentify --cov-fail-under=50`. Added FAKE-mode tests for the
+  previously-untested routes to clear it — `/batch` (NDJSON stream + cache
+  re-hit), `/compare`, `/map` with a populated DB (edges only reference real
+  nodes), the vibe lifecycle (`/vibes/add` → `/weight` → `/members` → `/remove`),
+  and `/vibes/match` + `/vibes/<id>/playlist` — taking coverage 42% → 55%.
 
 ### Changed
 - **Split `static/app.js` (2.7k lines) into three `<script>`-loaded files.** The
