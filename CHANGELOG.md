@@ -65,6 +65,10 @@ _Work in progress lands here, then gets stamped with a version + date on release
   `pyproject.toml`, `.env.example`, and an MIT `LICENSE`.
 - A `pytest` smoke-test suite (`tests/`) exercising the HTTP surface in FAKE
   mode against a throwaway DB.
+- **CI: bandit (Python SAST).** Runs `bandit -r vibedentify/` on every push; the
+  handful of in-context false positives (fake-mode RNG seeds, the hardcoded-HTTPS
+  model download, best-effort `try/except` around BPM/key) are triaged with
+  inline `# nosec <id>` justifications, so any *new* finding fails the build.
 
 ### Changed
 - **Split `static/app.js` (2.7k lines) into three `<script>`-loaded files.** The

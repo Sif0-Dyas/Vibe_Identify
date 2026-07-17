@@ -19,12 +19,19 @@ jobs:
         # lazily inside functions and the test suite runs in FAKE_ANALYZER mode,
         # so the models are never loaded. Installing it (large, niche wheels)
         # would only slow CI down without exercising any extra code path.
-        run: pip install flask mutagen numpy pytest ruff
+        run: pip install flask mutagen numpy pytest ruff bandit
 
       - name: Lint (ruff)
         run: |
           ruff check .
           ruff format --check .
+
+      - name: Security scan (bandit)
+        # SAST for the Python source. Known false-positives (fake-mode RNG seeds,
+        # the hardcoded-HTTPS model download, best-effort try/except around BPM/key)
+        # are triaged with inline `# nosec <id>` justifications, so a clean run is
+        # zero findings and any NEW finding fails the build.
+        run: bandit -r vibedentify/ -q
 
       - name: Test (pytest)
         run: pytest -q

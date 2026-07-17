@@ -23,7 +23,7 @@ def ensure_models():
         dest = MODEL_DIR / name
         if not (dest.exists() and dest.stat().st_size > 0):
             log.info("downloading %s ...", name)
-            urllib.request.urlretrieve(url, dest)
+            urllib.request.urlretrieve(url, dest)  # nosec B310  # fixed HTTPS essentia.upf.edu model URL, not user input
 
 
 def get_engine():
@@ -157,7 +157,7 @@ def read_title(path: Path) -> str | None:
                 t = str(vals[0]).strip()
                 if t:
                     return t
-    except Exception:
+    except Exception:  # nosec B110  # best-effort tag read; missing/odd tags degrade to None
         pass
     return None
 
@@ -198,7 +198,7 @@ def read_tags(path: Path) -> dict:
                 if ch:
                     tech["channels"] = str(ch)
                 tech["format"] = type(mf).__name__
-    except Exception:
+    except Exception:  # nosec B110  # best-effort metadata read; degrade gracefully on odd files
         pass
     return {"tag": tag, "tech": tech}
 
@@ -338,7 +338,8 @@ def analyze(path: Path) -> dict:
         import math
         import random
 
-        rng = random.Random(hashlib.md5(path.name.encode()).hexdigest())
+        seed = hashlib.md5(path.name.encode()).hexdigest()  # nosec B324  # deterministic seed for FAKE-mode data, not security
+        rng = random.Random(seed)  # nosec B311  # deterministic FAKE-mode PRNG, not security
         pool = [
             "Drum n Bass",
             "Trance",
@@ -443,7 +444,7 @@ def analyze(path: Path) -> dict:
     try:
         bpm, _, conf, _, _ = RhythmExtractor2013(method="multifeature")(audio44)
         bpm, bpm_conf = float(bpm), float(conf)
-    except Exception:
+    except Exception:  # nosec B110  # BPM extraction is best-effort; None on failure is fine
         pass
 
     key = scale = camelot = None
@@ -452,7 +453,7 @@ def analyze(path: Path) -> dict:
         k, s, strength = KeyExtractor()(audio44)
         key, scale, key_strength = str(k), str(s), float(strength)
         camelot = CAMELOT.get((key, scale))
-    except Exception:
+    except Exception:  # nosec B110  # key extraction is best-effort; None on failure is fine
         pass
 
     return {

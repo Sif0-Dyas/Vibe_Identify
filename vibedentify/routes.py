@@ -117,7 +117,8 @@ def refine_route():
             import hashlib
             import random
 
-            rng = random.Random(hashlib.md5(("fine" + f.filename).encode()).hexdigest())
+            seed = hashlib.md5(("fine" + f.filename).encode()).hexdigest()  # nosec B324  # deterministic seed for FAKE-mode data, not security
+            rng = random.Random(seed)  # nosec B311  # deterministic FAKE-mode PRNG, not security
             pool = [
                 "Drum n Bass",
                 "Trance",
@@ -220,7 +221,7 @@ def compare_route():
     if FAKE:
         import random
 
-        rng = random.Random(42)
+        rng = random.Random(42)  # nosec B311  # seeds deterministic FAKE-mode data, not security
         pool = ["Drum n Bass", "Dance-pop", "House", "Deep House", "Techno", "Trance", "Dubstep"]
         pairs = [
             {
