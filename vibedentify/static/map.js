@@ -637,11 +637,13 @@
     ctx.globalAlpha = 1;
 
     // Labels with semantic zoom (LOD): family names when zoomed out, subgenre
-    // names fading in as you zoom in. Galaxy mode has no hierarchy -> no fade.
+    // names fading in as you zoom in -- in BOTH regions and galaxy now.
     ctx.textAlign='center'; ctx.textBaseline='middle';
     // subgenre detail ramps in with zoom (sooner than before), then is gated
-    // per-family by how centred/near that cluster is -- see famFocus below.
-    const zoomLod = (mapMode==='galaxy') ? 0 : clamp((view.zoom - 0.8) / (1.7 - 0.8), 0, 1);
+    // per-family by how centred/near that cluster is -- see famFocus below. The
+    // proximity gate keeps galaxy's tight ball from lighting up every subgenre at
+    // once: only the clusters you've zoomed toward reveal their subgenre names.
+    const zoomLod = clamp((view.zoom - 0.8) / (1.7 - 0.8), 0, 1);
     const projPt = c => {
       const ax = c.x-pivot.x, ay = c.y-pivot.y, az = c.z-pivot.z;
       const x = ax*cy + az*sy, z = -ax*sy + az*cy;
