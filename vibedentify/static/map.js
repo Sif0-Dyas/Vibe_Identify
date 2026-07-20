@@ -598,6 +598,40 @@
       }
     }
 
+    // nodes far -> near (drawn BEFORE labels so the text stays on top / legible)
+    const selNode = selHash ? byHash.get(selHash) : null;
+    const harmonicOn = harmonic && selNode;
+    for (const h of order){
+      const p = proj.get(h), n = p.node;
+      const tw = 0.9 + 0.1*Math.sin(t*1.6 + n.ph);
+      const light = (26 + 44*p.depth) * tw;
+      let compatible = false, dim = 1;
+      if (harmonicOn && h !== selHash){         // harmonic mixing: mute non-matches
+        compatible = keyCompatible(selNode.camelot, n.camelot) && bpmCompatible(selNode.bpm, n.bpm);
+        dim = compatible ? 1 : 0.1;
+      }
+      ctx.globalAlpha = (0.45 + 0.55*p.depth) * dim;
+      ctx.beginPath(); ctx.arc(p.sx, p.sy, p.r, 0, 6.2832);
+      ctx.fillStyle = `hsl(${n.hue} ${n.sat||64}% ${clamp(light + (n.dl||0), 16, 84)}%)`;
+      ctx.fill();
+      if (compatible){                          // key + BPM compatible -> teal ring
+        ctx.globalAlpha = 0.5 + 0.5*p.depth;
+        ctx.beginPath(); ctx.arc(p.sx, p.sy, p.r+2.5, 0, 6.2832);
+        ctx.lineWidth = 1.6; ctx.strokeStyle = 'rgba(80,224,180,0.95)'; ctx.stroke();
+      }
+      if (n.flag){                              // likely misread -> amber ring
+        ctx.globalAlpha = 0.5 + 0.5*p.depth;
+        ctx.beginPath(); ctx.arc(p.sx, p.sy, p.r+2.5, 0, 6.2832);
+        ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,176,59,0.95)'; ctx.stroke();
+      }
+      if (h === selHash){
+        ctx.globalAlpha = 1;
+        ctx.beginPath(); ctx.arc(p.sx, p.sy, p.r+3.5, 0, 6.2832);
+        ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+
     // Labels with semantic zoom (LOD): family names when zoomed out, subgenre
     // names fading in as you zoom in. Galaxy mode has no hierarchy -> no fade.
     ctx.textAlign='center'; ctx.textBaseline='middle';
@@ -784,39 +818,6 @@
       }
     }
 
-    // nodes far -> near
-    const selNode = selHash ? byHash.get(selHash) : null;
-    const harmonicOn = harmonic && selNode;
-    for (const h of order){
-      const p = proj.get(h), n = p.node;
-      const tw = 0.9 + 0.1*Math.sin(t*1.6 + n.ph);
-      const light = (26 + 44*p.depth) * tw;
-      let compatible = false, dim = 1;
-      if (harmonicOn && h !== selHash){         // harmonic mixing: mute non-matches
-        compatible = keyCompatible(selNode.camelot, n.camelot) && bpmCompatible(selNode.bpm, n.bpm);
-        dim = compatible ? 1 : 0.1;
-      }
-      ctx.globalAlpha = (0.45 + 0.55*p.depth) * dim;
-      ctx.beginPath(); ctx.arc(p.sx, p.sy, p.r, 0, 6.2832);
-      ctx.fillStyle = `hsl(${n.hue} ${n.sat||64}% ${clamp(light + (n.dl||0), 16, 84)}%)`;
-      ctx.fill();
-      if (compatible){                          // key + BPM compatible -> teal ring
-        ctx.globalAlpha = 0.5 + 0.5*p.depth;
-        ctx.beginPath(); ctx.arc(p.sx, p.sy, p.r+2.5, 0, 6.2832);
-        ctx.lineWidth = 1.6; ctx.strokeStyle = 'rgba(80,224,180,0.95)'; ctx.stroke();
-      }
-      if (n.flag){                              // likely misread -> amber ring
-        ctx.globalAlpha = 0.5 + 0.5*p.depth;
-        ctx.beginPath(); ctx.arc(p.sx, p.sy, p.r+2.5, 0, 6.2832);
-        ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,176,59,0.95)'; ctx.stroke();
-      }
-      if (h === selHash){
-        ctx.globalAlpha = 1;
-        ctx.beginPath(); ctx.arc(p.sx, p.sy, p.r+3.5, 0, 6.2832);
-        ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
-      }
-    }
-    ctx.globalAlpha = 1;
     rafId = requestAnimationFrame(frame);
   }
   function startLoop(){ if(!running){ running=true; rafId=requestAnimationFrame(frame); } }
