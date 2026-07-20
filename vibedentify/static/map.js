@@ -43,6 +43,7 @@
   const view = { zoom: 1, panx: 0, pany: 0 };
   const pivot = { x:0, y:0, z:0 };     // orbit centre (eased): see the frame loop
   let famPivot = null;                 // a clicked genre's centroid to orbit around
+  let focusedFam = null;               // a clicked genre -> force ITS subgenre labels on
   let spinSpeed = 0.0006, running = false, rafId = null, filterFam = null;   // 10% of the 0.006 max
   let edgesOn = true, harmonic = false, flaggedOnly = false;
   const tipEl = document.getElementById('map-tip');
@@ -788,7 +789,8 @@
         const fam = key.slice(0, key.indexOf('||'));
         // "always show subgenres" (or an isolated genre) bypasses the zoom/focus
         // gate so they stay readable without having to zoom into the cluster.
-        const forced = LBL.subAlways || (LBL.onlyFam && fam === LBL.onlyFam);
+        const forced = LBL.subAlways || (LBL.onlyFam && fam === LBL.onlyFam)
+                       || fam === focusedFam;   // clicked genre -> reveal its subgenres
         let focus = famFocus[fam] || 0;
         if (forced) focus = Math.max(focus, 1);
         if (focus < 0.02) continue;
@@ -917,7 +919,7 @@
   /* ---- select + camera fly ----------------------------------------- */
   function selectNode(hash){
     const n = byHash.get(hash); if (!n) return;
-    selHash = hash; famPivot = null;   // orbit around this track now, not a genre
+    selHash = hash; famPivot = null; focusedFam = null;   // orbit this track, not a genre
     if (mapMode !== 'tree'){
       // the pivot eases to this track (frame loop), so it becomes the orbit
       // centre. keep the rotation, just zoom in a bit and recentre the view.
@@ -1066,7 +1068,7 @@
       ? title.slice(artist.length+3) : title;
 
   function closePopup(){
-    popEl.hidden = true; selHash = null; famPivot = null;
+    popEl.hidden = true; selHash = null; famPivot = null; focusedFam = null;
   }
 
   /* ---- search ------------------------------------------------------ */
@@ -1113,6 +1115,7 @@
     const c = CENTROIDS[fam]; if (!c) return;
     closePopup();                     // drop any track selection...
     famPivot = c;                     // ...then orbit around this cluster's centre
+    focusedFam = fam;                 // ...and force this genre's subgenre labels on
     const ry = Math.atan2(-c.x, c.z), rx = Math.atan2(c.y, Math.hypot(c.x, c.z));
     anim = { f:{rx:rot.x,ry:rot.y,z:view.zoom,px:view.panx,py:view.pany},
              t:{rx, ry, z:2.0, px:0, py:0}, t0:performance.now(), dur:640 };
@@ -1126,6 +1129,7 @@
     const cen = { x:x/c, y:y/c, z:z/c };
     closePopup();
     famPivot = cen;                   // orbit around the subgenre sub-cluster
+    focusedFam = fam;                 // keep the family's subgenre labels visible
     const ry = Math.atan2(-cen.x, cen.z), rx = Math.atan2(cen.y, Math.hypot(cen.x, cen.z));
     anim = { f:{rx:rot.x,ry:rot.y,z:view.zoom,px:view.panx,py:view.pany},
              t:{rx, ry, z:2.8, px:0, py:0}, t0:performance.now(), dur:640 };   // tighter zoom
