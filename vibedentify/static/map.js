@@ -285,10 +285,13 @@
     MAXR = 0.5;
     for (const n of NODES){ const d = Math.hypot(n.x3, n.y3, n.z3); if (d > MAXR) MAXR = d; }
 
-    // subgenre label anchors (regions only): centroid of each style sub-cluster
-    // with >=4 members -- these fade in as you zoom in (semantic zoom / LOD).
+    // subgenre label anchors: centroid of each style sub-cluster with >=labelMin
+    // members. In regions they fade in as you zoom into a cluster (semantic zoom /
+    // LOD). Galaxy has no genre hierarchy, so there's no zoom-fade -- but we still
+    // compute the anchors so "Always show subgenres" and clicking a genre can
+    // reveal them there too.
     STYLE_CENTROIDS = {};
-    if (mapMode !== 'galaxy'){
+    {
       // label threshold scales with library size: a subgenre earns a label once
       // it has ~1/90th of the library (min 2, max 12) -- so a small library
       // surfaces subgenres eagerly, a large one stays uncluttered.
