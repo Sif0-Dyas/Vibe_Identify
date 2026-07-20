@@ -43,7 +43,7 @@
   const view = { zoom: 1, panx: 0, pany: 0 };
   const pivot = { x:0, y:0, z:0 };     // orbit centre (eased): see the frame loop
   let famPivot = null;                 // a clicked genre's centroid to orbit around
-  let spinSpeed = 0.0022, running = false, rafId = null, filterFam = null;
+  let spinSpeed = 0.0006, running = false, rafId = null, filterFam = null;   // 10% of the 0.006 max
   let edgesOn = true, harmonic = false, flaggedOnly = false;
   const tipEl = document.getElementById('map-tip');
   let anim = null;                         // camera tween
@@ -75,6 +75,29 @@
   try { legendCollapsed = localStorage.getItem('vibeLegend') === 'off'; } catch(_){ /* private mode */ }
   const famHue = fam => (FAM_HUE[fam] == null ? hueOf(fam) : FAM_HUE[fam]);
   const famCss = fam => `hsl(${famHue(fam)} 62% 62%)`;
+
+  /* -- user label preferences (persisted). Read live inside frame() so every
+     change takes effect on the next rendered frame -- no relayout needed. --
+       showFam    show the overarching (family) genre labels
+       showSub    show the subgenre labels
+       subAlways  show subgenres regardless of zoom/focus (skip the LOD gate)
+       onlyFam    '' = every genre; else isolate ONE family (its label + subs)
+       colorFam   colour family labels with the genre's own hue vs. plain white
+       counts     append the track count to each label
+       opacity    0..1 overall label transparency multiplier
+       dist       0.5..2.5 family-label distance from the cloud centre
+       size       0.6..1.6 label size multiplier
+       maxFam     0 = all, else cap the number of genre labels (biggest kept)
+       maxSub     0 = all, else cap the number of subgenre labels             */
+  const LBL_DEFAULTS = { showFam:true, showSub:true, subAlways:false, onlyFam:'',
+    colorFam:false, counts:false, opacity:1, dist:1, size:1, maxFam:0, maxSub:0 };
+  let LBL = Object.assign({}, LBL_DEFAULTS);
+  try { LBL = Object.assign(LBL, JSON.parse(localStorage.getItem('vibeMapLabels') || '{}') || {}); } catch(_){}
+  const saveLbl = () => { try{ localStorage.setItem('vibeMapLabels', JSON.stringify(LBL)); }catch(_){ /* private */ } };
+  // user-customisable per-SUBGENRE base hue (persisted), keyed "fam||style".
+  // Overrides the family-derived shade so a single subgenre can be any colour.
+  let SUB_HUE = {};
+  try { SUB_HUE = JSON.parse(localStorage.getItem('vibeSubHue') || '{}') || {}; } catch(_){ SUB_HUE = {}; }
   function hexToHue(hex){
     const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || '');
     if (!m) return null;
@@ -100,10 +123,14 @@
   // from afar. Returns {h, s, dl} (hue, saturation, lightness delta).
   function styleShade(fam, style){
     const base = famHue(fam);
-    if (!style || style === fam) return { h: base, s: 64, dl: 0 };
+    const ov = style ? SUB_HUE[`${fam}||${style}`] : null;   // per-subgenre override
+    if (!style || style === fam)
+      return { h: (ov == null ? base : ov), s: 64, dl: 0 };
     const r = hash01(style + '|' + fam);
     return {
-      h: ((base + (r*2 - 1)*36) % 360 + 360) % 360,   // family hue +/- 36 degrees
+      // an overridden subgenre uses its chosen hue exactly; otherwise the family
+      // hue nudged +/- 36 degrees so untouched subgenres still read as kin.
+      h: ov != null ? ov : ((base + (r*2 - 1)*36) % 360 + 360) % 360,
       s: 48 + Math.floor(hash01('s' + style) * 38),   // 48..86 (wide, for shade contrast)
       dl: (hash01('l' + style)*2 - 1) * 15,           // +/- 15 lightness
     };
@@ -297,7 +324,8 @@
         const sh = styleShade(f, st);
         const col = `hsl(${sh.h} ${clamp(sh.s, 40, 88)}% ${clamp(58 + sh.dl, 44, 70)}%)`;
         return `<span class="leg-sub" data-fam="${escapeHtml(f)}" data-style="${escapeHtml(st)}"`
-          + ` title="zoom to ${escapeHtml(st)}"><span class="sdot" style="background:${col}"></span>${escapeHtml(st)} ${c}</span>`;
+          + ` title="zoom to ${escapeHtml(st)}"><span class="sdot" title="click to recolour this subgenre"`
+          + ` style="background:${col}"></span>${escapeHtml(st)} ${c}</span>`;
       }).join('') + (more > 0 ? `<span class="leg-more">+${more} more</span>` : '');
       return `<div class="leg-group">${head}<div class="leg-subs">${subHtml}</div></div>`;
     }).join('');
@@ -317,8 +345,12 @@
       el.querySelector('.dot').onclick = ev => { ev.stopPropagation(); pickFamColor(f, ev.currentTarget); };
       el.onclick = () => focusFamily(f);
     });
-    legendEl.querySelectorAll('.leg-sub').forEach(el =>
-      el.onclick = () => focusStyle(el.getAttribute('data-fam'), el.getAttribute('data-style')));
+    legendEl.querySelectorAll('.leg-sub').forEach(el => {
+      const f = el.getAttribute('data-fam'), st = el.getAttribute('data-style');
+      const sd = el.querySelector('.sdot');
+      if (sd) sd.onclick = ev => { ev.stopPropagation(); pickSubColor(f, st, ev.currentTarget); };
+      el.onclick = () => focusStyle(f, st);
+    });
     // (re)populate the filter dropdown, preserving the current choice
     const fe = document.getElementById('map-filter');
     if (fe){
@@ -328,29 +360,46 @@
         + FAMS.map(f => `<option value="${escapeHtml(f)}">${escapeHtml(f)} · ${COUNTS[f]}</option>`).join('');
       fe.value = (cur === '__flagged__' || FAMS.includes(cur)) ? cur : '';
     }
+    // the label-panel "isolate genre" dropdown draws from the same family list
+    const oe = document.getElementById('lbl-only');
+    if (oe){
+      oe.innerHTML = `<option value="">show all</option>`
+        + FAMS.map(f => `<option value="${escapeHtml(f)}">${escapeHtml(f)} · ${COUNTS[f]}</option>`).join('');
+      oe.value = FAMS.includes(LBL.onlyFam) ? LBL.onlyFam : (LBL.onlyFam = '');
+    }
   }
 
-  // recolour a whole genre family (and its subgenre shades) via a native colour
-  // picker; the choice persists in localStorage and re-applies on load.
-  let _famPicker = null;
-  function pickFamColor(fam, anchor){
-    if (!_famPicker){
-      _famPicker = document.createElement('input');
-      _famPicker.type = 'color';
-      _famPicker.style.cssText = 'position:fixed;width:0;height:0;opacity:0;border:0;padding:0;pointer-events:none';
-      document.body.appendChild(_famPicker);
+  // a shared hidden native colour input; each caller wires its own onHue.
+  let _picker = null;
+  function openColorPicker(seedHex, anchor, onHue){
+    if (!_picker){
+      _picker = document.createElement('input');
+      _picker.type = 'color';
+      _picker.style.cssText = 'position:fixed;width:0;height:0;opacity:0;border:0;padding:0;pointer-events:none';
+      document.body.appendChild(_picker);
     }
-    _famPicker.value = hslHex(famHue(fam), 62, 62);   // seed with the current colour
-    _famPicker.oninput = () => {
-      const hue = hexToHue(_famPicker.value);
-      if (hue == null) return;
-      FAM_HUE[fam] = Math.round(hue);
-      try{ localStorage.setItem('vibeFamHue', JSON.stringify(FAM_HUE)); }catch(_){ /* private mode */ }
-      if (NODES.length) layout();                     // recompute node shades + legend
-    };
+    _picker.value = seedHex;
+    _picker.oninput = () => { const hue = hexToHue(_picker.value); if (hue != null) onHue(Math.round(hue)); };
     const r = anchor.getBoundingClientRect();
-    _famPicker.style.left = r.left + 'px'; _famPicker.style.top = r.bottom + 'px';
-    _famPicker.click();
+    _picker.style.left = r.left + 'px'; _picker.style.top = r.bottom + 'px';
+    _picker.click();
+  }
+  // recolour a whole genre family (and its subgenre shades); persists + re-applies.
+  function pickFamColor(fam, anchor){
+    openColorPicker(hslHex(famHue(fam), 62, 62), anchor, hue => {
+      FAM_HUE[fam] = hue;
+      try{ localStorage.setItem('vibeFamHue', JSON.stringify(FAM_HUE)); }catch(_){ /* private */ }
+      if (NODES.length) layout();                     // recompute node shades + legend
+    });
+  }
+  // recolour ONE subgenre to an exact hue (overrides its family-derived shade).
+  function pickSubColor(fam, style, anchor){
+    const sh = styleShade(fam, style);
+    openColorPicker(hslHex(sh.h, clamp(sh.s,40,88), clamp(58+sh.dl,44,70)), anchor, hue => {
+      SUB_HUE[`${fam}||${style}`] = hue;
+      try{ localStorage.setItem('vibeSubHue', JSON.stringify(SUB_HUE)); }catch(_){ /* private */ }
+      if (NODES.length) layout();
+    });
   }
 
   /* ---- organic left-to-right genre tree (root -> families -> subgenres) ---
@@ -443,15 +492,27 @@
       else { const sh = styleShade(nd.fam, nd.label);   // subgenre = shade of family
         ctx.fillStyle = `hsl(${sh.h} ${clamp(sh.s-4,42,80)}% ${clamp(56+sh.dl,44,66)}%)`; }
       ctx.fill();
-      ctx.textAlign = isFam ? 'right' : 'left';   // fam labels left, sub labels right
-      const lx = isFam ? sx - r - 6 : sx + r + 6;
-      const hot = nd === hoverGenre;
-      const label = hot ? `${nd.label} ${nd.count}` : nd.label;   // count only on hover
-      ctx.font = isFam ? '800 15px Syne, sans-serif' : "500 11px 'JetBrains Mono', monospace";
-      ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(0,0,0,0.92)';
-      ctx.strokeText(label, lx, sy);
-      ctx.fillStyle = hot ? '#ffffff' : (isFam ? '#e9eef7' : '#aeb8ca');
-      ctx.fillText(label, lx, sy);
+      // labels honour the label-options panel (hide / isolate / colour / counts / size / opacity)
+      const showLabel = (isFam ? LBL.showFam : LBL.showSub)
+        && !(LBL.onlyFam && nd.fam !== LBL.onlyFam);
+      if (showLabel){
+        ctx.textAlign = isFam ? 'right' : 'left';   // fam labels left, sub labels right
+        const lx = isFam ? sx - r - 6 : sx + r + 6;
+        const hot = nd === hoverGenre;
+        const label = (hot || LBL.counts) ? `${nd.label} ${nd.count}` : nd.label;   // count on hover, or always if set
+        const fsz = Math.round((isFam ? 15 : 11) * LBL.size);
+        ctx.font = isFam ? `800 ${fsz}px Syne, sans-serif` : `500 ${fsz}px 'JetBrains Mono', monospace`;
+        ctx.globalAlpha = LBL.opacity;
+        ctx.lineWidth = 3.5;
+        ctx.strokeStyle = LBL.colorFam ? 'rgba(255,255,255,0.92)' : 'rgba(0,0,0,0.92)';
+        ctx.strokeText(label, lx, sy);
+        if (hot) ctx.fillStyle = '#ffffff';
+        else if (isFam) ctx.fillStyle = LBL.colorFam ? famCss(nd.fam) : '#e9eef7';
+        else { const sh = styleShade(nd.fam, nd.label);
+          ctx.fillStyle = LBL.colorFam ? `hsl(${sh.h} ${clamp(sh.s,45,85)}% 72%)` : '#aeb8ca'; }
+        ctx.fillText(label, lx, sy);
+        ctx.globalAlpha = 1;
+      }
     }
   }
 
@@ -550,12 +611,14 @@
       const persp = CAM/(CAM - z2);
       return { sx: cxp + x*persp*DISP, sy: cyp + y2*persp*DISP, z2, persp };
     };
-    // labels get a dark halo (stroke) so they stay legible over dense clusters
+    // labels get a halo (stroke) so they stay legible over dense clusters. With
+    // colour-matching on, the halo flips to white so the coloured text pops.
     ctx.lineJoin = 'round';
+    const halo = LBL.colorFam ? 'rgba(255,255,255,0.92)' : 'rgba(0,0,0,0.9)';
     const drawLabel = (text, p, fs, fill) => {
       ctx.font = fs;
       ctx.lineWidth = 3.5;
-      ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+      ctx.strokeStyle = halo;
       ctx.strokeText(text, p.sx, p.sy);
       ctx.fillStyle = fill;
       ctx.fillText(text, p.sx, p.sy);
@@ -578,20 +641,28 @@
     // fan out around the cluster -- even a tight galaxy ball -- each tied back
     // to its true centroid by a colour-coded leader line.
     const fl = [];
-    let cx0 = 0, cy0 = 0;
     for (const f of FAMS){
+      if (!LBL.showFam) break;                          // family labels hidden
+      if (LBL.onlyFam && f !== LBL.onlyFam) continue;   // isolate one genre's label
       if (filterFam && f !== filterFam) continue;
       const p = projPt(CENTROIDS[f]);
       if (p.persp <= 0) continue;
       const depth = clamp((p.z2+1.15)/2.3, 0, 1);
-      const alpha = (0.52 + 0.32*depth) * (1 - 0.9*(famFocus[f]||0));   // fade when focused
+      const alpha = (0.52 + 0.32*depth) * (1 - 0.9*(famFocus[f]||0)) * LBL.opacity;   // fade when focused
       if (alpha < 0.04) continue;
-      const fs = Math.min(21, 13 + CENTROIDS[f].n*0.3) * clamp(p.persp, 0.9, 1.25);
+      const fs = Math.min(21, 13 + CENTROIDS[f].n*0.3) * clamp(p.persp, 0.9, 1.25) * LBL.size;
+      const text = (LBL.counts ? `${f} ${CENTROIDS[f].n}` : f).toUpperCase();
       ctx.font = `800 ${fs}px Syne, sans-serif`;
-      fl.push({ f, ax:p.sx, ay:p.sy, lx:p.sx, ly:p.sy,
-                hw:ctx.measureText(f.toUpperCase()).width/2 + 5, hh:fs*0.62, fs, alpha });
-      cx0 += p.sx; cy0 += p.sy;
+      fl.push({ f, text, ax:p.sx, ay:p.sy, lx:p.sx, ly:p.sy,
+                hw:ctx.measureText(text).width/2 + 5, hh:fs*0.62, fs, alpha });
     }
+    // declutter: keep only the N biggest genre labels (by track count)
+    if (LBL.maxFam > 0 && fl.length > LBL.maxFam){
+      fl.sort((a,b) => (CENTROIDS[b.f].n||0) - (CENTROIDS[a.f].n||0));
+      fl.length = LBL.maxFam;
+    }
+    let cx0 = 0, cy0 = 0;
+    for (const l of fl){ cx0 += l.ax; cy0 += l.ay; }
     if (fl.length){
       cx0 /= fl.length; cy0 /= fl.length;
       let spread = 0;                                   // how clustered are the anchors?
@@ -633,6 +704,14 @@
           l.lx += dx/d * 3; l.ly += dy/d * 3;
         }
       }
+      // user "distance from the middle": scale every label's offset from the
+      // cloud centre. >1 pushes labels out toward the edges, <1 pulls them in.
+      if (LBL.dist !== 1){
+        for (const l of fl){
+          l.lx = cx0 + (l.lx - cx0) * LBL.dist;
+          l.ly = cy0 + (l.ly - cy0) * LBL.dist;
+        }
+      }
     }
     for (let pass=0; pass<90; pass++){                  // 2D AABB min-penetration relax
       let moved = false;
@@ -659,32 +738,44 @@
         ctx.strokeStyle = `hsla(${famHue(l.f)} 62% 62% / ${clamp(0.65*l.alpha+0.2, 0, 0.75)})`;
         ctx.beginPath(); ctx.moveTo(l.ax, l.ay); ctx.lineTo(l.lx, l.ly); ctx.stroke();
       }
-      drawLabel(l.f.toUpperCase(), {sx:l.lx, sy:l.ly},
-        `800 ${l.fs}px Syne, sans-serif`, `rgba(233,238,247,${l.alpha})`);
+      const fill = LBL.colorFam                         // colour-match the genre?
+        ? `hsla(${famHue(l.f)} 72% 70% / ${l.alpha})`
+        : `rgba(233,238,247,${l.alpha})`;
+      drawLabel(l.text, {sx:l.lx, sy:l.ly}, `800 ${l.fs}px Syne, sans-serif`, fill);
       famLabelHits.push({ f:l.f, cx:l.lx, cy:l.ly, hw:l.hw, hh:l.hh });   // click -> fly here
     }
     // subgenre labels -- shown only inside the focused cluster(s), coloured as a
     // shade of the family so they read as "part of" it. Drawn far -> near.
-    {
+    if (LBL.showSub) {
       const subs = [];
       for (const key in STYLE_CENTROIDS){
         if (filterFam && !key.startsWith(filterFam + '||')) continue;
+        if (LBL.onlyFam && !key.startsWith(LBL.onlyFam + '||')) continue;   // isolate one genre
         const fam = key.slice(0, key.indexOf('||'));
-        const focus = famFocus[fam] || 0;
+        // "always show subgenres" (or an isolated genre) bypasses the zoom/focus
+        // gate so they stay readable without having to zoom into the cluster.
+        const forced = LBL.subAlways || (LBL.onlyFam && fam === LBL.onlyFam);
+        let focus = famFocus[fam] || 0;
+        if (forced) focus = Math.max(focus, 1);
         if (focus < 0.02) continue;
         const c = STYLE_CENTROIDS[key], p = projPt(c);
         if (p.persp <= 0) continue;
         const depth = clamp((p.z2+1.15)/2.3, 0, 1);
-        const a = (0.62 + 0.38*depth) * clamp(focus*1.5, 0, 1);
+        const a = (0.62 + 0.38*depth) * clamp(focus*1.5, 0, 1) * LBL.opacity;
         if (a < 0.03) continue;
         const sh = styleShade(fam, c.style);
-        const fs = Math.min(22, 11 + c.n*0.4) * clamp(p.persp, 0.85, 1.3);
+        const fs = Math.min(22, 11 + c.n*0.4) * clamp(p.persp, 0.85, 1.3) * LBL.size;
+        const text = (LBL.counts ? `${c.style} ${c.n}` : c.style).toUpperCase();
         ctx.font = `700 ${fs}px 'JetBrains Mono', monospace`;
-        subs.push({ p, depth, fam, style: c.style, text: c.style.toUpperCase(), fs,
-          hw: ctx.measureText(c.style.toUpperCase()).width/2 + 4, hh: fs*0.6,
+        subs.push({ p, depth, fam, style: c.style, text, fs, n: c.n,
+          hw: ctx.measureText(text).width/2 + 4, hh: fs*0.6,
           // bright, high-lightness tint of the family hue so it reads over the
           // similarly-hued nodes (the dark halo in drawLabel does the rest).
           col: `hsla(${sh.h} ${clamp(sh.s+20, 55, 96)}% ${clamp(82 + sh.dl*0.5, 74, 90)}% / ${a})` });
+      }
+      // declutter: keep only the N biggest subgenre labels (by track count)
+      if (LBL.maxSub > 0 && subs.length > LBL.maxSub){
+        subs.sort((x,y) => y.n - x.n); subs.length = LBL.maxSub;
       }
       subs.sort((x,y) => x.depth - y.depth);
       for (const s of subs){
@@ -1050,7 +1141,7 @@
 
   const spinEl = document.getElementById('map-spin');   // orbit-speed slider
   const playBtn = document.getElementById('map-play');  // pause / play the orbit
-  let lastSpin = 0.0022;
+  let lastSpin = 0.0006;
   const syncSpin = () => { if (spinEl) spinEl.value = Math.round(spinSpeed / 0.006 * 100); };
   function reflectPlay(){                                // button icon <- current state
     if (!playBtn) return;
@@ -1061,7 +1152,7 @@
   }
   const applySpin = () => { if (spinEl){ spinSpeed = (spinEl.value / 100) * 0.006; reflectPlay(); } };
   function toggleSpin(){
-    if (spinSpeed > 0){ lastSpin = spinSpeed; spinSpeed = 0; } else { spinSpeed = lastSpin || 0.0022; }
+    if (spinSpeed > 0){ lastSpin = spinSpeed; spinSpeed = 0; } else { spinSpeed = lastSpin || 0.0006; }
     syncSpin(); reflectPlay();
   }
   spinEl && spinEl.addEventListener('input', applySpin);
@@ -1096,6 +1187,66 @@
   harmonicBtn && harmonicBtn.addEventListener('click', () => {
     harmonic = !harmonic; harmonicBtn.classList.toggle('on', harmonic);
   });
+
+  /* ---- label options popover --------------------------------------- */
+  const lblBtn   = document.getElementById('map-lbl-btn');
+  const lblPanel = document.getElementById('map-lbl-panel');
+  if (lblBtn && lblPanel){
+    const $ = id => document.getElementById(id);
+    // null-safe setters so an HTML/JS version mismatch never crashes the map
+    const setChk = (id, v) => { const el = $(id); if (el) el.checked = v; };
+    const setVal = (id, v) => { const el = $(id); if (el) el.value = v; };
+    const setTxt = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+    // push current LBL state into the controls
+    const syncLbl = () => {
+      setChk('lbl-fam', LBL.showFam);
+      setChk('lbl-sub', LBL.showSub);
+      setChk('lbl-subalways', LBL.subAlways);
+      setChk('lbl-color', LBL.colorFam);
+      setChk('lbl-counts', LBL.counts);
+      setVal('lbl-op',   Math.round(LBL.opacity * 100));
+      setVal('lbl-dist', Math.round(LBL.dist * 100));
+      setVal('lbl-size', Math.round(LBL.size * 100));
+      setVal('lbl-maxf', LBL.maxFam);
+      setVal('lbl-maxs', LBL.maxSub);
+      setTxt('lbl-op-v',   Math.round(LBL.opacity * 100) + '%');
+      setTxt('lbl-dist-v', LBL.dist.toFixed(1) + '×');
+      setTxt('lbl-size-v', LBL.size.toFixed(1) + '×');
+      setTxt('lbl-maxf-v', LBL.maxFam ? LBL.maxFam : 'all');
+      setTxt('lbl-maxs-v', LBL.maxSub ? LBL.maxSub : 'all');
+      setVal('lbl-only', LBL.onlyFam || '');
+      lblBtn.classList.toggle('on',
+        !LBL.showFam || !LBL.showSub || !!LBL.onlyFam || !!LBL.maxFam || !!LBL.maxSub);
+    };
+    syncLbl();
+    lblBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      lblPanel.hidden = !lblPanel.hidden;
+    });
+    lblPanel.addEventListener('click', e => e.stopPropagation());
+    document.addEventListener('click', () => { lblPanel.hidden = true; });
+    const bind = (id, fn) => { const el = $(id); if (el) el.addEventListener('input', () => { fn(el); saveLbl(); syncLbl(); }); };
+    bind('lbl-fam',       el => LBL.showFam   = el.checked);
+    bind('lbl-sub',       el => LBL.showSub   = el.checked);
+    bind('lbl-subalways', el => LBL.subAlways = el.checked);
+    bind('lbl-color',     el => LBL.colorFam  = el.checked);
+    bind('lbl-counts',    el => LBL.counts    = el.checked);
+    bind('lbl-only',      el => LBL.onlyFam   = el.value);
+    bind('lbl-op',        el => LBL.opacity   = +el.value / 100);
+    bind('lbl-dist',      el => LBL.dist      = +el.value / 100);
+    bind('lbl-size',      el => LBL.size      = +el.value / 100);
+    bind('lbl-maxf',      el => LBL.maxFam    = +el.value);
+    bind('lbl-maxs',      el => LBL.maxSub    = +el.value);
+    $('lbl-reset').addEventListener('click', () => {
+      LBL = Object.assign({}, LBL_DEFAULTS); saveLbl(); syncLbl();
+    });
+    // clear every custom genre + subgenre colour (back to the auto hues)
+    $('lbl-reset-col').addEventListener('click', () => {
+      FAM_HUE = {}; SUB_HUE = {};
+      try{ localStorage.removeItem('vibeFamHue'); localStorage.removeItem('vibeSubHue'); }catch(_){}
+      if (NODES.length) layout();
+    });
+  }
 
   // keyboard nav: W/S zoom · A/D orbit · arrows pan · +/- zoom · Space play/pause
   //               · f fit · Esc close
@@ -1163,11 +1314,12 @@
   tabsEl.addEventListener('click', e => {
     const b = e.target.closest('.tab'); if (!b) return; switchTo(b.dataset.view);
   });
-  if (location.hash === '#galaxy'){
-    mapMode = 'galaxy';
-    modeEl && modeEl.querySelectorAll('.mm').forEach(m => m.classList.toggle('active', m.dataset.mode==='galaxy'));
+  if (location.hash === '#galaxy' || location.hash === '#tree'){
+    mapMode = location.hash.slice(1);                 // 'galaxy' | 'tree'
+    modeEl && modeEl.querySelectorAll('.mm').forEach(m => m.classList.toggle('active', m.dataset.mode===mapMode));
   }
-  if (location.hash === '#map' || location.hash.startsWith('#map=') || location.hash === '#galaxy')
+  if (location.hash === '#map' || location.hash.startsWith('#map=')
+      || location.hash === '#galaxy' || location.hash === '#tree')
     switchTo('map');
   else if (location.hash === '#guide') switchTo('guide');
 

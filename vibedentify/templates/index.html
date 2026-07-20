@@ -94,9 +94,38 @@
     <select id="map-filter" class="map-filter" title="show only one genre (or just the flagged reads)">
       <option value="">all genres</option>
     </select>
+    <div class="map-lblwrap">
+      <button id="map-lbl-btn" class="map-toggle" type="button" title="label options (hide, colour, spacing, transparency)">&#127991;</button>
+      <div id="map-lbl-panel" class="map-panel" hidden>
+        <div class="mp-head">Labels</div>
+        <label class="mp-row"><input type="checkbox" id="lbl-fam" checked><span>Genre labels</span></label>
+        <label class="mp-row"><input type="checkbox" id="lbl-sub" checked><span>Subgenre labels</span></label>
+        <label class="mp-row"><input type="checkbox" id="lbl-subalways"><span>Always show subgenres</span></label>
+        <label class="mp-row"><input type="checkbox" id="lbl-color"><span>Colour-match genres</span></label>
+        <label class="mp-row"><input type="checkbox" id="lbl-counts"><span>Show track counts</span></label>
+        <div class="mp-sep"></div>
+        <label class="mp-field"><span>Isolate genre</span>
+          <select id="lbl-only" class="map-filter"><option value="">show all</option></select></label>
+        <label class="mp-field"><span>Transparency <i id="lbl-op-v">100%</i></span>
+          <input type="range" id="lbl-op" min="10" max="100" value="100"></label>
+        <label class="mp-field"><span>Distance <i id="lbl-dist-v">1.0×</i></span>
+          <input type="range" id="lbl-dist" min="50" max="250" value="100"></label>
+        <label class="mp-field"><span>Size <i id="lbl-size-v">1.0×</i></span>
+          <input type="range" id="lbl-size" min="60" max="170" value="100"></label>
+        <label class="mp-field"><span>Max genre labels <i id="lbl-maxf-v">all</i></span>
+          <input type="range" id="lbl-maxf" min="0" max="30" value="0"></label>
+        <label class="mp-field"><span>Max subgenre labels <i id="lbl-maxs-v">all</i></span>
+          <input type="range" id="lbl-maxs" min="0" max="40" value="0"></label>
+        <div class="mp-hint">tip: click a legend dot to recolour a genre or subgenre</div>
+        <div class="mp-btns">
+          <button id="lbl-reset" type="button" class="mp-reset">reset labels</button>
+          <button id="lbl-reset-col" type="button" class="mp-reset">reset colours</button>
+        </div>
+      </div>
+    </div>
     <button id="map-play" class="map-toggle on" type="button" title="pause / play the orbit (Space)">&#9208;</button>
     <label class="map-spin-wrap" title="orbit speed (drag to 0 to stop)">&#8635;
-      <input type="range" id="map-spin" min="0" max="100" value="37">
+      <input type="range" id="map-spin" min="0" max="100" value="10">
     </label>
     <span class="map-hint" id="map-count">loading&hellip;</span>
     <span class="spacer"></span>
