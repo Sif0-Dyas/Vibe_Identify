@@ -59,7 +59,7 @@ Click **⊕ batch folder** and give it the path to a folder of music. It scans t
 
 Each analyzed row shows three things:
 
-- **Track** — the title with a **genre-colored waveform** underneath. The colors come from the moment-by-moment genre guesses, so you can literally *see* where a track changes character — an ambient intro, a drop, a half-time breakdown. Hover the waveform to magnify it; click anywhere on it to **play and seek** from that point.
+- **Track** — the title with a **genre-colored waveform** underneath. The colors come from the moment-by-moment genre guesses, so you can literally *see* where a track changes character — an ambient intro, a drop, a half-time breakdown. Hover the waveform to magnify it; click anywhere on it to **play and seek** from that point. **Shift-drag** a time range to **override that section as a genre** — it repaints in the override style and the extracted clip is saved into that genre's training folder (needs a track added from a folder/batch, not a browser-dropped file).
 - **BPM / Key** — the tempo and musical key. The key is shown in **Camelot** notation (like `8A`), the wheel DJs use for harmonic mixing, alongside the plain key.
 - **Genre** — the breakdown: the dominant genre(s) and their share of the track, tagged with the broad **family** they belong to (House, Trance, Bass Music, …). If a read looks shaky, you may also see a **⚠ "sounds like …"** hint suggesting a better fit (see section 6).
 

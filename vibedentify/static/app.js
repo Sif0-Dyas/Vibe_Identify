@@ -232,7 +232,7 @@ function addRow(file){
    focus null it draws flat. Returns nothing; purely visual.
    STRENGTH controls bulge amount; ZONE is how wide (in track-fraction) the lens
    reaches before it's back to ~1x. */
-function drawWave(canvas, peaks, fallbackColor, segments, focus, mainSet){
+function drawWave(canvas, peaks, fallbackColor, segments, focus, mainSet, overrides){
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth || 300, h = canvas.clientHeight || 60;
   canvas.width = w * dpr; canvas.height = h * dpr;
@@ -265,6 +265,13 @@ function drawWave(canvas, peaks, fallbackColor, segments, focus, mainSet){
       color = bandColor(raw, mainSet);
       label = bandLabel(raw, mainSet);
     }
+    // a manual segment override wins this column: paint it the override genre's
+    // colour and flag it (label change forces a boundary tick at the span edge).
+    let ov = null;
+    if (overrides && overrides.length){
+      for (const o of overrides){ if (f >= o.a && f < o.b){ ov = o; break; } }
+    }
+    if (ov){ color = colorFor(ov.genre); label = 'ovr ' + ov.genre; }
     // boundary tick where the displayed genre changes (Other counts as one genre)
     if (label !== lastLabel && lastLabel !== null){
       ctx.globalAlpha = 1; ctx.fillStyle = 'rgba(255,255,255,.20)';
@@ -274,6 +281,12 @@ function drawWave(canvas, peaks, fallbackColor, segments, focus, mainSet){
     ctx.globalAlpha = focus == null ? 0.9 : 0.94;
     ctx.fillStyle = color;
     ctx.fillRect(px, mid - amp, 1.05, amp * 2);
+    if (ov){                                   // manual-override treatment: wash + top accent bar
+      ctx.globalAlpha = 0.12; ctx.fillStyle = '#ffffff';
+      ctx.fillRect(px, 0, 1.05, h);
+      ctx.globalAlpha = 0.95; ctx.fillStyle = 'rgba(120,200,255,0.95)';
+      ctx.fillRect(px, 0, 1.05, 2);
+    }
   }
   ctx.globalAlpha = 1;
 }
@@ -427,6 +440,14 @@ function finishRow(row, data, file){
 
     const dur = data.duration || 0;
 
+    // persisted segment overrides (shipped with the payload on cache hits). Kept
+    // as raw {start_s,end_s,genre}; converted to 0..1 fractions for drawWave.
+    let segOverrides = (data.segment_overrides || []).slice();
+    function ovFracs(){
+      if (!dur) return [];
+      return segOverrides.map(o => ({a: o.start_s / dur, b: o.end_s / dur, genre: o.genre}));
+    }
+
     // effective mode = per-row override (if set) else the global default
     function segMode(){ return row._segOverride || GLOBAL.seg; }
 
@@ -441,7 +462,7 @@ function finishRow(row, data, file){
       waveState.mainSet = mainGenreSet(waveState.segments, waveState.fine);
     }
     function redraw(focus){
-      drawWave(c, waveState.peaks, pcol, waveState.segments, focus ?? null, waveState.mainSet);
+      drawWave(c, waveState.peaks, pcol, waveState.segments, focus ?? null, waveState.mainSet, ovFracs());
     }
     applySmoothing();
     requestAnimationFrame(() => redraw(null));
@@ -452,17 +473,107 @@ function finishRow(row, data, file){
       f = Math.max(0, Math.min(1, f));
       redraw(f);
       const g = genreAt(waveState.segments, f);
+      // a manual segment override at this position wins the tooltip label
+      let ovg = null;
+      if (dur) for (const o of segOverrides){ if (f >= o.start_s / dur && f < o.end_s / dur){ ovg = o.genre; break; } }
       const isOther = g && waveState.mainSet && !waveState.mainSet.has(g);
-      const swatch = g ? bandColor(g, waveState.mainSet) : null;
-      const text = g ? (isOther ? `${g} \u00b7 other` : g) : '';
+      const shown = ovg || g;
+      const swatch = shown ? (ovg ? colorFor(ovg) : bandColor(g, waveState.mainSet)) : null;
+      const text = ovg ? `${ovg} \u00b7 override` : (g ? (isOther ? `${g} \u00b7 other` : g) : '');
       tip.style.left = (f * rect.width) + 'px';
       tip.style.display = 'block';
       tip.innerHTML = `${fmtTime(f * dur)}` +
-        (g ? `<span class="sw" style="background:${swatch}"></span>${escapeHtml(text)}` : '');
+        (shown ? `<span class="sw" style="background:${swatch}"></span>${escapeHtml(text)}` : '');
     }
-    c.addEventListener('pointermove', e => showAt(e.clientX));
-    c.addEventListener('pointerdown', e => { c.setPointerCapture(e.pointerId); showAt(e.clientX); });
-    c.addEventListener('pointerleave', () => { tip.style.display = 'none'; redraw(null); });
+
+    // ---- shift-drag to override a time RANGE as a genre (segment override) ----
+    // A modifier keeps this from fighting the hover magnifier / click-to-play:
+    // shift-drag selects a span; a plain drag still magnifies. See the guide.
+    const fracFromX = cx => { const r = c.getBoundingClientRect(); return Math.max(0, Math.min(1, (cx - r.left) / r.width)); };
+    let sel = null;   // {a, b} fractions while a shift-drag is in progress
+
+    function paintSel(){
+      redraw(null);
+      if (!sel) return;
+      const rect = c.getBoundingClientRect();
+      const x0 = Math.min(sel.a, sel.b) * rect.width, x1 = Math.max(sel.a, sel.b) * rect.width;
+      const ctx = c.getContext('2d');                 // transform already dpr-scaled by drawWave
+      ctx.globalAlpha = 0.22; ctx.fillStyle = '#78c8ff';
+      ctx.fillRect(x0, 0, Math.max(1, x1 - x0), c.clientHeight || 60);
+      ctx.globalAlpha = 1;
+    }
+
+    c.addEventListener('pointermove', e => {
+      if (sel){ sel.b = fracFromX(e.clientX); paintSel(); return; }
+      showAt(e.clientX);
+    });
+    c.addEventListener('pointerdown', e => {
+      if (e.shiftKey){                                // begin a range selection
+        e.preventDefault();
+        closeSegMenu();
+        c.setPointerCapture(e.pointerId);
+        const f = fracFromX(e.clientX);
+        sel = {a: f, b: f};
+        paintSel();
+        return;                                       // don't magnify or start playback
+      }
+      c.setPointerCapture(e.pointerId); showAt(e.clientX);
+    });
+    c.addEventListener('pointerup', e => {
+      if (!sel) return;
+      sel.b = fracFromX(e.clientX);
+      const a = Math.min(sel.a, sel.b), b = Math.max(sel.a, sel.b);
+      sel = null;
+      redraw(null);
+      if ((b - a) * dur < 0.5){ return; }             // ignore an accidental tiny drag
+      openSegMenu(a, b);
+    });
+    c.addEventListener('pointerleave', () => { if (sel) return; tip.style.display = 'none'; redraw(null); });
+
+    // ---- floating "override section as [genre]" menu ----
+    let segMenu = null;
+    function closeSegMenu(){ if (segMenu){ segMenu.remove(); segMenu = null; } }
+    function openSegMenu(a, b){
+      closeSegMenu();
+      const s = a * dur, e = b * dur;
+      segMenu = document.createElement('div');
+      segMenu.className = 'segmenu';
+      segMenu.innerHTML =
+        `<div class="segmenu-lbl">override <b>${fmtTime(s)}\u2013${fmtTime(e)}</b> as</div>` +
+        `<div class="segmenu-row"><input class="segmenu-genre" type="text" autocomplete="off" spellcheck="false" placeholder="genre (e.g. Riddim)">` +
+        `<button class="segmenu-apply" type="button">apply</button>` +
+        `<button class="segmenu-cancel" type="button" title="cancel">\u2715</button></div>` +
+        `<div class="segmenu-msg"></div>`;
+      const rect = c.getBoundingClientRect();
+      const mid = ((a + b) / 2) * rect.width;
+      segMenu.style.left = Math.max(4, Math.min(rect.width - 220, mid - 110)) + 'px';
+      container.appendChild(segMenu);
+      const input = segMenu.querySelector('.segmenu-genre');
+      const msg = segMenu.querySelector('.segmenu-msg');
+      const apply = segMenu.querySelector('.segmenu-apply');
+      input.focus();
+      segMenu.querySelector('.segmenu-cancel').addEventListener('click', closeSegMenu);
+      async function submit(){
+        const genre = input.value.trim();
+        if (!genre){ input.focus(); return; }
+        if (!data.hash){ msg.textContent = 'this track has no hash yet'; return; }
+        apply.disabled = true; msg.textContent = 'extracting section\u2026';
+        let j;
+        try {
+          const resp = await fetch('/override_segment', {method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({hash: data.hash, start: s, end: e, genre})});
+          j = await resp.json();
+          if (!resp.ok){ msg.textContent = j.error || 'failed'; apply.disabled = false; return; }
+        } catch(_){ msg.textContent = 'request failed'; apply.disabled = false; return; }
+        // persist locally + repaint the span in the manual-override style
+        segOverrides.push({start_s: s, end_s: e, genre});
+        redraw(null);
+        if (renderGenreCell) renderGenreCell();
+        closeSegMenu();
+      }
+      apply.addEventListener('click', submit);
+      input.addEventListener('keydown', ev => { if (ev.key === 'Enter') submit(); if (ev.key === 'Escape') closeSegMenu(); });
+    }
 
     /* fine-detail: re-analyze just this track at ~0.5s resolution on demand */
     fineBtn.addEventListener('click', async () => {

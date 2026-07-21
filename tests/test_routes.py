@@ -7,8 +7,11 @@ an empty temp DB (see conftest.py).
 
 import io
 import json
+import shutil
 import struct
 import wave
+
+import pytest
 
 
 def test_index_serves_page(client):
@@ -406,6 +409,109 @@ def test_training_confirm_clears_prior_reject(client):
     body = client.get("/training/candidates/Riddim").get_json()
     assert body["labeled"] >= 1
     assert h not in [c["hash"] for c in body["candidates"]]
+
+
+def _batch_one(client, tmp_path, name="seg.wav", sample=9):
+    # batch-analyze a single file so the cached track has a server-side filepath
+    # (needed by /override_segment); returns its hash.
+    music = tmp_path / "music"
+    music.mkdir(exist_ok=True)
+    (music / name).write_bytes(_tiny_wav_bytes(sample=sample))
+    lines = client.post("/batch", json={"path": str(music)}).data.decode().splitlines()
+    results = [json.loads(x) for x in lines if x.strip()]
+    return next(r["hash"] for r in results if r.get("hash")), music
+
+
+def test_override_segment_validation(client):
+    # missing / partial fields
+    assert client.post("/override_segment", json={}).status_code == 400
+    assert client.post("/override_segment", json={"hash": "x"}).status_code == 400  # no genre
+    # unknown hash -> 404
+    assert (
+        client.post(
+            "/override_segment", json={"hash": "nope", "genre": "G", "start": 0, "end": 1}
+        ).status_code
+        == 404
+    )
+
+    # a browser-dropped track exists but has no server-side filepath
+    payload = client.post(
+        "/analyze",
+        data={"file": (io.BytesIO(_tiny_wav_bytes()), "seg.wav")},
+        content_type="multipart/form-data",
+    ).get_json()
+    h, dur = payload["hash"], payload["duration"]
+
+    # non-numeric bounds -> 400
+    assert (
+        client.post(
+            "/override_segment", json={"hash": h, "genre": "G", "start": "a", "end": 1}
+        ).status_code
+        == 400
+    )
+    # start >= end -> 400
+    assert (
+        client.post(
+            "/override_segment", json={"hash": h, "genre": "G", "start": 5, "end": 5}
+        ).status_code
+        == 400
+    )
+    # negative start -> 400
+    assert (
+        client.post(
+            "/override_segment", json={"hash": h, "genre": "G", "start": -1, "end": 2}
+        ).status_code
+        == 400
+    )
+    # end past the track duration -> 400
+    assert (
+        client.post(
+            "/override_segment", json={"hash": h, "genre": "G", "start": 0, "end": dur + 10}
+        ).status_code
+        == 400
+    )
+    # valid range, but a dropped track has no file to extract from -> clear message
+    r = client.post("/override_segment", json={"hash": h, "genre": "G", "start": 0, "end": 1})
+    assert r.status_code == 400
+    assert "server-side file" in r.get_json()["error"]
+
+
+def test_override_segment_persists_on_cache_hit(client, tmp_path, monkeypatch):
+    # isolate the training-clip destination so extraction can't touch ~/genre_training
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    h, music = _batch_one(client, tmp_path, sample=3)
+
+    # the override is recorded even if ffmpeg is absent (extraction is a soft step)
+    r = client.post(
+        "/override_segment", json={"hash": h, "genre": "Riddim", "start": 0.0, "end": 1.0}
+    )
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+
+    # a cache-hit re-analyze ships the span with the payload for the waveform repaint
+    lines = client.post("/batch", json={"path": str(music)}).data.decode().splitlines()
+    row = next(r for r in (json.loads(x) for x in lines if x.strip()) if r.get("hash") == h)
+    assert row["cached"] is True
+    ovs = row.get("segment_overrides")
+    assert ovs and ovs[0]["genre"] == "Riddim"
+    assert ovs[0]["start_s"] == 0.0 and ovs[0]["end_s"] == 1.0
+
+
+def test_override_segment_extracts_clip(client, tmp_path, monkeypatch):
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg not on PATH -- extraction path not exercised")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    h, _ = _batch_one(client, tmp_path, sample=7)
+
+    r = client.post(
+        "/override_segment", json={"hash": h, "genre": "Riddim", "start": 0.0, "end": 1.0}
+    )
+    assert r.status_code == 200
+    j = r.get_json()
+    assert j["extracted"] is True, j.get("extract_error")
+    clips = list((tmp_path / "genre_training" / "Riddim").glob(f"{h}_*"))
+    assert clips and clips[0].stat().st_size > 0
 
 
 def test_misread_flag_logic():

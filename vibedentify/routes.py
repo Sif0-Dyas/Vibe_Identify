@@ -87,6 +87,7 @@ def analyze_route():
             if cached:
                 cached["hash"] = h
                 cached["cached"] = True
+                cached["segment_overrides"] = _segment_overrides(h)
                 return jsonify(cached)
 
             title = read_title(p) or Path(f.filename).stem
@@ -338,6 +339,131 @@ def override_route(h):
                 shutil.copy2(src, dest)
             trained = True
     return jsonify({"ok": True, "genre": genre, "trained": trained})
+
+
+# ----------------------------------------------------------------------------
+# Segment-level overrides: label a drag-selected time range of a track a genre.
+# Records the span (repainted on the waveform, persisted across cache hits) and
+# extracts just that range into ~/genre_training/<genre>/ with ffmpeg.
+# ----------------------------------------------------------------------------
+def _segment_overrides(h):
+    """The persisted segment overrides for a track, oldest span first."""
+    with _db_lock, closing(db()) as conn, conn as c:
+        rows = c.execute(
+            "SELECT start_s, end_s, genre FROM segment_overrides WHERE hash=? ORDER BY start_s",
+            (h,),
+        ).fetchall()
+    return [{"start_s": r[0], "end_s": r[1], "genre": r[2]} for r in rows]
+
+
+def _extract_segment(src, safe_genre, h, start, end):
+    """Extract [start, end] of ``src`` into ~/genre_training/<safe_genre>/ with
+    ffmpeg. Tries a stream-copy first (fast, lossless, container permitting) and
+    falls back to a re-encode. Returns (dest_path | None, error | None); a missing
+    ffmpeg is a soft failure (the override is still recorded, just not clipped)."""
+    import shutil
+    import subprocess  # nosec B404  # only used to run ffmpeg with a fixed arg list, never a shell
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return None, "ffmpeg not found on PATH -- override recorded, clip not extracted"
+    dest_dir = Path.home() / "genre_training" / safe_genre
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    ext = src.suffix.lower() or ".wav"
+    dest = dest_dir / f"{h}_{int(round(start))}-{int(round(end))}{ext}"
+    # -ss before -i = fast input seek; -t = duration. Build both variants.
+    base = [
+        ffmpeg,
+        "-nostdin",
+        "-y",
+        "-ss",
+        f"{start:.3f}",
+        "-i",
+        str(src),
+        "-t",
+        f"{end - start:.3f}",
+    ]
+
+    def _run(cmd):
+        try:
+            r = subprocess.run(cmd, capture_output=True, timeout=300)  # nosec B603  # ffmpeg from shutil.which, args are a list (no shell), src is a DB-recorded path
+            if r.returncode == 0 and dest.exists() and dest.stat().st_size > 0:
+                return True, None
+            return False, (r.stderr.decode(errors="replace")[-300:].strip() or "ffmpeg failed")
+        except (subprocess.SubprocessError, OSError) as e:
+            return False, str(e)
+
+    ok, err = _run(base + ["-map", "0:a", "-c", "copy", str(dest)])  # (1) stream-copy
+    if ok:
+        return str(dest), None
+    ok, err = _run(base + ["-vn", str(dest)])  # (2) re-encode fallback
+    return (str(dest), None) if ok else (None, err)
+
+
+@bp.post("/override_segment")
+def override_segment_route():
+    """Label a time range of a track a genre. Validates 0 <= start < end <=
+    duration, records the span, and extracts that range into the genre's training
+    folder. Needs a server-side source file: a browser-dropped track (no saved
+    path) gets a clear message rather than a silent re-upload."""
+    data = request.get_json(silent=True) or {}
+    h = (data.get("hash") or "").strip()
+    genre = (data.get("genre") or "").strip()
+    if not h or not genre:
+        return jsonify({"error": "hash and genre required"}), 400
+    try:
+        start = float(data.get("start"))
+        end = float(data.get("end"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "start and end must be numbers"}), 400
+
+    with _db_lock, closing(db()) as conn, conn as c:
+        row = c.execute("SELECT filepath, payload FROM tracks WHERE hash=?", (h,)).fetchone()
+    if not row:
+        return jsonify({"error": "track not in database"}), 404
+    filepath, payload = row
+    duration = (json.loads(payload) if payload else {}).get("duration")
+
+    # validate the range: 0 <= start < end <= duration (small tolerance on the end)
+    if not (start >= 0 and end > start):
+        return jsonify({"error": "need 0 <= start < end"}), 400
+    if duration and end > duration + 0.5:
+        return jsonify(
+            {"error": f"end {end:.1f}s is past the track duration ({duration:.1f}s)"}
+        ), 400
+
+    # extraction needs the real file -- dropped tracks have none; say so plainly.
+    if not filepath:
+        return jsonify(
+            {
+                "error": "section overrides need a server-side file. This track was "
+                "dropped in the browser and has no saved path -- add it from a folder "
+                "or batch scan first, then override sections of it."
+            }
+        ), 400
+    src = Path(filepath)
+    if not src.is_file():
+        return jsonify({"error": "the source file for this track no longer exists on disk"}), 404
+
+    with _db_lock, closing(db()) as conn, conn as c:
+        c.execute(
+            "INSERT INTO segment_overrides(hash, start_s, end_s, genre, created) VALUES(?,?,?,?,?)",
+            (h, start, end, genre, time.time()),
+        )
+    # ffmpeg extraction stays OUTSIDE the DB lock (subprocess + disk I/O)
+    safe = "".join(ch if ch.isalnum() or ch in " _-" else "_" for ch in genre).strip()
+    clip, err = _extract_segment(src, safe, h, start, end) if safe else (None, "invalid genre name")
+    return jsonify(
+        {
+            "ok": True,
+            "hash": h,
+            "genre": genre,
+            "start": start,
+            "end": end,
+            "extracted": bool(clip),
+            "extract_error": err,
+        }
+    )
 
 
 # ----------------------------------------------------------------------------
@@ -970,6 +1096,7 @@ def batch_route():
             if cached:
                 cached = dict(cached)
                 cached.update({"ok": True, "hash": h, "cached": True, "filepath": str(path)})
+                cached["segment_overrides"] = _segment_overrides(h)
                 return cached
             title = read_title(path) or path.stem
             tags = read_tags(path)

@@ -21,6 +21,18 @@ Keep the newest version on top. Under each version, group lines under
 _Work in progress lands here, then gets stamped with a version + date on release._
 
 ### Added
+- **Segment-level overrides (shift-drag the waveform).** Shift-drag a time range
+  on any track's waveform to label just that section a genre. A floating "override
+  section as [genre]" menu appears; confirming (1) records the span in a new
+  `segment_overrides` table, (2) extracts exactly that range from the source audio
+  with ffmpeg — stream-copy where the container allows, re-encode fallback — into
+  `~/genre_training/<genre>/<hash>_<start>-<end><ext>` (so partial-track labels
+  feed the custom-head trainer), and (3) repaints that span on the waveform in the
+  manual-override style with the genre in the hover tooltip, persisted across cache
+  hits. New route `POST /override_segment {hash, start, end, genre}` validates
+  `0 ≤ start < end ≤ duration`; browser-dropped tracks (no saved path) get a clear
+  "needs a server-side file" message instead of a silent re-upload. The modifier
+  (shift) keeps drag-select from fighting the hover magnifier / click-to-play.
 - **Labeling accelerator (`◎ label` panel).** A queue that turns building a
   custom-genre training set from hunt-and-peck into confirm/reject. Pick or type a
   genre and it ranks every unlabeled cached track by embedding similarity to that

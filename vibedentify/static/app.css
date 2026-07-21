@@ -245,6 +245,27 @@ input[type=file]{display:none}
   font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--dim);
   margin-top:3px; display:flex; align-items:center; gap:7px;
 }
+/* floating "override section as [genre]" menu (shift-drag on the waveform) */
+.segmenu{
+  position:absolute; top:64px; width:220px; z-index:6;
+  background:var(--panel-2); border:1px solid var(--line); border-radius:7px;
+  padding:8px 9px; box-shadow:0 6px 18px rgba(0,0,0,.45);
+}
+.segmenu-lbl{ font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--dim); margin-bottom:6px; }
+.segmenu-lbl b{ color:var(--text); }
+.segmenu-row{ display:flex; gap:5px; }
+.segmenu-genre{
+  flex:1; min-width:0; font-family:'JetBrains Mono',monospace; font-size:11px;
+  padding:4px 7px; border-radius:5px; background:var(--panel); border:1px solid var(--line); color:var(--text);
+}
+.segmenu-row button{
+  font-family:'JetBrains Mono',monospace; font-size:11px; padding:4px 8px; border-radius:5px;
+  background:var(--panel); border:1px solid var(--line); color:var(--dim); cursor:pointer; flex:none;
+}
+.segmenu-apply:hover{ color:var(--text); border-color:var(--accent-a); }
+.segmenu-cancel:hover{ color:var(--err); border-color:var(--err); }
+.segmenu-row button:disabled{ opacity:.5; cursor:default; }
+.segmenu-msg{ font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--dim); margin-top:5px; min-height:1px; line-height:1.4; }
 .wavehint .restag{color:var(--text)}
 .finebtn{
   font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--trance);

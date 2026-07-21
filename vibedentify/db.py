@@ -41,6 +41,11 @@ def init_db():
             UNIQUE(hash, genre))""")
         c.execute("""CREATE TABLE IF NOT EXISTS training_rejects(
             hash TEXT, genre TEXT, UNIQUE(hash, genre))""")
+        # segment-level manual overrides: a time range of a track labelled a genre
+        # (drag-selected on the waveform). Shipped with the payload on cache hits so
+        # the waveform repaints the span; also drives ffmpeg clip extraction.
+        c.execute("""CREATE TABLE IF NOT EXISTS segment_overrides(
+            hash TEXT, start_s REAL, end_s REAL, genre TEXT, created REAL)""")
         # migration: weighted vibe membership (Rocchio relevance feedback).
         # Older DBs have vibe_tracks(vibe_id, hash) only; add the weight column.
         cols = {r[1] for r in c.execute("PRAGMA table_info(vibe_tracks)")}
