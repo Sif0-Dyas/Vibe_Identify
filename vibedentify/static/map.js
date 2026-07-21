@@ -1291,7 +1291,9 @@
   });
 
   /* ---- load + tab wiring ------------------------------------------- */
-  async function ensureBuilt(){
+  // Refetches /map on every map-tab open ON PURPOSE: tracks analyzed since the
+  // last open must show up without a page reload. Do NOT add fetch-once caching.
+  async function loadMap(){
     try{
       const data = await fetch('/map').then(r=>r.json());
       NODES = data.nodes || []; EDGES = data.edges || [];
@@ -1312,7 +1314,7 @@
     document.body.classList.toggle('view-map', on);
     document.getElementById('map-view').hidden = !on;
     if (on){
-      ensureBuilt().then(() => {
+      loadMap().then(() => {
         resize();
         if (mapMode === 'tree') fitTree(); else view.zoom = clamp(0.95/(MAXR||1), 0.25, 1.6);
         startLoop();
