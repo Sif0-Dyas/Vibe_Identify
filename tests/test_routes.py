@@ -263,6 +263,67 @@ def test_vibe_routes_require_fields(client):
     assert client.post("/vibes/remove", json={}).status_code == 400
 
 
+def test_second_style_override_returns_none():
+    # an override wins outright -> no 2nd genre to blend toward, even if the raw
+    # salience still lists a runner-up.
+    from vibedentify.routes import _second_style
+
+    payload = {"override": "Riddim", "salience": [{"style": "House", "score": 0.4}]}
+    assert _second_style(payload, "Dubstep", 0.6) is None
+
+
+def test_second_style_runner_up_weight():
+    # weight2 = sc / (top_score + sc), rounded to 3 places, <= 0.5 when the caller
+    # passes a genuine top score (top_score >= runner-up score).
+    from vibedentify.routes import _second_style
+
+    payload = {"salience": [{"style": "Techno", "score": 0.5}, {"style": "House", "score": 0.3}]}
+    assert _second_style(payload, "Techno", 0.5) == ["House", 0.375]  # 0.3 / 0.8
+
+    # rounds to 3 places: 0.3 / 0.85 = 0.352941... -> 0.353
+    payload = {"salience": [{"style": "Techno", "score": 0.55}, {"style": "House", "score": 0.3}]}
+    assert _second_style(payload, "Techno", 0.55) == ["House", 0.353]
+
+    # a runner-up as strong as the top pins the weight at its 0.5 ceiling
+    payload = {"salience": [{"style": "Techno", "score": 0.4}, {"style": "House", "score": 0.4}]}
+    assert _second_style(payload, "Techno", 0.4) == ["House", 0.5]
+
+
+def test_second_style_no_distinct_runner_up():
+    # nothing but the top style (or duplicates of it) -> no runner-up -> None.
+    from vibedentify.routes import _second_style
+
+    only_top = {"salience": [{"style": "Techno", "score": 0.5}]}
+    assert _second_style(only_top, "Techno", 0.5) is None
+
+    dupes = {"salience": [{"style": "Techno", "score": 0.5}, {"style": "Techno", "score": 0.3}]}
+    assert _second_style(dupes, "Techno", 0.5) is None
+
+
+def test_second_style_falls_back_to_styles():
+    # salience is preferred, but a missing/empty salience falls through to styles;
+    # with neither, there's no runner-up.
+    from vibedentify.routes import _second_style
+
+    styles = [{"style": "Techno", "score": 0.5}, {"style": "House", "score": 0.3}]
+    assert _second_style({"styles": styles}, "Techno", 0.5) == ["House", 0.375]  # salience absent
+    assert _second_style({"salience": [], "styles": styles}, "Techno", 0.5) == ["House", 0.375]
+    assert _second_style({"salience": [], "styles": []}, "Techno", 0.5) is None  # both empty
+    assert _second_style({}, "Techno", 0.5) is None  # neither key present
+
+
+def test_second_style_zero_top_score_no_zero_division():
+    # a zero/None top_score must not raise: denom = (top_score or 0) + sc is always
+    # >= sc > 0 here, so the division is safe. With a zero top the weight comes out
+    # at 1.0 -- outside the docstring's [0, 0.5], but the map clamps the mix weight
+    # to 0.5 when rendering, so this degenerate input is harmless downstream.
+    from vibedentify.routes import _second_style
+
+    payload = {"salience": [{"style": "Techno", "score": 0.0}, {"style": "House", "score": 0.3}]}
+    assert _second_style(payload, "Techno", 0) == ["House", 1.0]
+    assert _second_style(payload, "Techno", None) == ["House", 1.0]
+
+
 def test_misread_flag_logic():
     # the core rule: a shaky read whose close neighbours agree on a different
     # family gets flagged; a confident read does not.

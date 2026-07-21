@@ -21,6 +21,10 @@ Keep the newest version on top. Under each version, group lines under
 _Work in progress lands here, then gets stamped with a version + date on release._
 
 ### Added
+- **Tests: `_second_style` runner-up helper.** Direct unit tests for the map's
+  colour-blend helper (`vibedentify/routes.py`) — override short-circuit, exact
+  weight `sc / (top_score + sc)` with its 0.5 ceiling, no-distinct-runner-up,
+  salience→styles fallback, and the zero/None `top_score` (no division-by-zero).
 - **Map: fuller camera navigation.** The 3-D view now supports **pan** in
   addition to orbit + zoom — **right-drag / middle-drag / Shift + left-drag** to
   slide across the scene, or **Shift + arrow keys**. A **⏸ / ▶ button** next to
