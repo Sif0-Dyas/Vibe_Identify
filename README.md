@@ -103,6 +103,11 @@ deliberately opt into LAN/Tailscale access. The HTTP API assumes a trusted calle
 (routes read/scan/copy server-side paths), so only expose it beyond localhost
 intentionally.
 
+A `.env` file in the project root is **loaded automatically at startup** (no
+dependency; real environment variables always take precedence). Copy
+[`.env.example`](./.env.example) to `.env` to set the values below without
+exporting them. `.env` is git-ignored; `.env.example` is tracked.
+
 Environment variables (all optional; see [`.env.example`](./.env.example)):
 `MODEL_DIR` (model download dir), `GENRE_DB` (SQLite path), `CUSTOM_HEAD` (path
 to `custom_head.npz`), `MAEST_MODEL` (MAEST graph filename), `GENRE_HOST` (bind

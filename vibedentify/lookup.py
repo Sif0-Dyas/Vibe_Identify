@@ -18,7 +18,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from .config import DISCOGS_TOKEN, LASTFM_KEY, log
+from .config import DISCOGS_KEY, DISCOGS_SECRET, DISCOGS_TOKEN, LASTFM_KEY, log
 
 # MusicBrainz etiquette: a descriptive User-Agent with contact info, and no more
 # than one request per second. Discogs also wants an identifying UA.
@@ -52,10 +52,19 @@ def parse_track(payload, title, filename):
     return artist, (clean or track), remix
 
 
+def _discogs_auth():
+    """Discogs auth params: a personal access token, else a consumer key+secret."""
+    if DISCOGS_TOKEN:
+        return {"token": DISCOGS_TOKEN}
+    if DISCOGS_KEY and DISCOGS_SECRET:
+        return {"key": DISCOGS_KEY, "secret": DISCOGS_SECRET}
+    return None
+
+
 def configured():
     """Which sources can be queried: Discogs/Last.fm need a key; MusicBrainz doesn't."""
     return {
-        "discogs": bool(DISCOGS_TOKEN),
+        "discogs": _discogs_auth() is not None,
         "musicbrainz": True,
         "lastfm": bool(LASTFM_KEY),
     }
@@ -81,14 +90,15 @@ def _get_json(url):
 # --- Discogs ---------------------------------------------------------------
 def fetch_discogs(artist, title):
     """Search Discogs releases; returns (raw_json | None, error | None)."""
-    if not DISCOGS_TOKEN:
-        return None, "no DISCOGS_TOKEN configured"
+    auth = _discogs_auth()
+    if auth is None:
+        return None, "no DISCOGS_TOKEN or DISCOGS_KEY/DISCOGS_SECRET configured"
     params = {
         "type": "release",
         "artist": artist,
         "release_title": title,
         "per_page": 5,
-        "token": DISCOGS_TOKEN,
+        **auth,
     }
     url = "https://api.discogs.com/database/search?" + urllib.parse.urlencode(
         {k: v for k, v in params.items() if v}

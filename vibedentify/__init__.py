@@ -8,6 +8,7 @@ import os
 
 from flask import Flask
 
+from . import config  # noqa: F401 -- imported first so .env loads before db/routes read env
 from .db import init_db
 from .routes import bp
 

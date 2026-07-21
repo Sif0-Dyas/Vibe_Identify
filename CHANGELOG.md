@@ -21,6 +21,13 @@ Keep the newest version on top. Under each version, group lines under
 _Work in progress lands here, then gets stamped with a version + date on release._
 
 ### Added
+- **Auto-loaded `.env`.** A project-root `.env` is now read at startup (dependency
+  -free, in `config.py`) so the dev server picks up config/secrets without a manual
+  `source`. Real environment variables always win; parsing is tolerant (blank
+  lines, `#` comments, optional `export`, quoted values); a missing file is a
+  silent no-op. Skipped under pytest. Discogs lookup accepts either a personal
+  access token (`DISCOGS_TOKEN`) or a consumer key + secret (`DISCOGS_KEY` /
+  `DISCOGS_SECRET`).
 - **External metadata lookup (🔎 per row).** A lookup button on each analyzed row
   queries three public music APIs by artist/title (parsed from the tags / title /
   filename, remix descriptor included): **Discogs** (`DISCOGS_TOKEN`) release
