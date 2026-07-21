@@ -542,6 +542,114 @@ def test_override_segment_delete(client, tmp_path, monkeypatch):
     assert row.get("segment_overrides") == []
 
 
+def test_lookup_parsers_on_canned_json():
+    from vibedentify import lookup
+
+    # discogs: best match's styles then genres, de-duped
+    d = {"results": [{"style": ["Riddim", "Dubstep"], "genre": ["Electronic", "Dubstep"]}]}
+    assert [x["name"] for x in lookup.parse_discogs(d)] == ["Riddim", "Dubstep", "Electronic"]
+    assert lookup.parse_discogs({"results": []}) == []
+
+    # musicbrainz: genres + tags merged, de-duped by name (max count), sorted desc
+    mb = {
+        "recordings": [
+            {
+                "genres": [{"name": "dubstep", "count": 3}],
+                "tags": [{"name": "bass music", "count": 1}, {"name": "dubstep", "count": 5}],
+            }
+        ]
+    }
+    out = lookup.parse_musicbrainz(mb)
+    assert out[0] == {"name": "dubstep", "count": 5}
+    assert {"name": "bass music", "count": 1} in out
+    assert lookup.parse_musicbrainz({"recordings": []}) == []
+
+    # last.fm: toptags.tag list (and a lone dict) -> [{name, count}]
+    lf = {"toptags": {"tag": [{"name": "dubstep", "count": 100}, {"name": "bass", "count": 40}]}}
+    assert lookup.parse_lastfm(lf) == [
+        {"name": "dubstep", "count": 100},
+        {"name": "bass", "count": 40},
+    ]
+    assert lookup.parse_lastfm({"toptags": {"tag": {"name": "solo", "count": 1}}}) == [
+        {"name": "solo", "count": 1}
+    ]
+
+
+def test_lookup_parse_track():
+    from vibedentify import lookup
+
+    # metadata tags win for artist/title
+    p = {"tags": {"tag": {"artist": "Skrillex", "title": "Rumble"}}}
+    assert lookup.parse_track(p, "ignore me", "x.mp3")[:2] == ("Skrillex", "Rumble")
+    # fallback: 'Artist - Title (VIP Mix)' parsed from the title, remix extracted
+    a, t, remix = lookup.parse_track({}, "Skrillex - Rumble (VIP Mix)", "x.mp3")
+    assert (a, t) == ("Skrillex", "Rumble")
+    assert "VIP Mix" in remix
+    # nothing but a bare filename stem
+    a2, t2, _ = lookup.parse_track({}, "", "justname.wav")
+    assert a2 == "" and t2 == "justname"
+
+
+def test_lookup_unknown_hash_404(client):
+    assert client.get("/lookup/deadbeef").status_code == 404
+
+
+def _boom(url):
+    raise OSError("network disabled in tests")
+
+
+def test_lookup_all_keys_absent_clean(client, monkeypatch):
+    # no keys configured -> Discogs/Last.fm skipped; guard the network so the
+    # keyless MusicBrainz source can't reach out either. Response stays a clean,
+    # graceful 200 with per-source notes and no results.
+    from vibedentify import lookup
+
+    monkeypatch.setattr(lookup, "_get_json", _boom)
+    h = client.post(
+        "/analyze",
+        data={"file": (io.BytesIO(_tiny_wav_bytes()), "Artist - Song.wav")},
+        content_type="multipart/form-data",
+    ).get_json()["hash"]
+    r = client.get(f"/lookup/{h}")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["results"] == {}
+    assert body["errors"]["discogs"] == "not configured"
+    assert body["errors"]["lastfm"] == "not configured"
+    assert "musicbrainz" in body["errors"]  # attempted, failed gracefully (not fatal)
+
+
+def test_lookup_cache_hit_never_queries(client, monkeypatch):
+    from contextlib import closing
+
+    from vibedentify import lookup
+    from vibedentify.db import _db_lock, db
+
+    # any network call now fails loudly -> proves the cache short-circuits it
+    monkeypatch.setattr(lookup, "_get_json", _boom)
+    h = client.post(
+        "/analyze",
+        data={"file": (io.BytesIO(_tiny_wav_bytes()), "A - B.wav")},
+        content_type="multipart/form-data",
+    ).get_json()["hash"]
+
+    seeded = {
+        "discogs": [{"name": "Riddim"}],
+        "musicbrainz": [{"name": "dubstep", "count": 3}],
+        "lastfm": [{"name": "bass", "count": 9}],
+    }
+    with _db_lock, closing(db()) as conn, conn as c:
+        for src, val in seeded.items():
+            c.execute(
+                "INSERT INTO lookup_cache(hash, source, response_json, fetched) VALUES(?,?,?,?)",
+                (h, src, json.dumps(val), 0.0),
+            )
+
+    body = client.get(f"/lookup/{h}").get_json()
+    assert body["results"] == seeded  # all served from cache
+    assert body["errors"] == {}  # nothing was queried (else _boom would have errored)
+
+
 def test_misread_flag_logic():
     # the core rule: a shaky read whose close neighbours agree on a different
     # family gets flagged; a confident read does not.

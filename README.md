@@ -107,7 +107,10 @@ Environment variables (all optional; see [`.env.example`](./.env.example)):
 `MODEL_DIR` (model download dir), `GENRE_DB` (SQLite path), `CUSTOM_HEAD` (path
 to `custom_head.npz`), `MAEST_MODEL` (MAEST graph filename), `GENRE_HOST` (bind
 address, default `127.0.0.1`), `MAX_UPLOAD_MB` (upload cap, default 512),
-`FAKE_ANALYZER=1` (mock mode).
+`FAKE_ANALYZER=1` (mock mode), and — for the 🔎 per-row metadata lookup —
+`DISCOGS_TOKEN` ([Discogs token](https://www.discogs.com/settings/developers))
+and `LASTFM_KEY` ([Last.fm key](https://www.last.fm/api/account/create));
+MusicBrainz needs no key.
 
 ---
 

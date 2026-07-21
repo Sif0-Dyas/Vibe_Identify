@@ -21,6 +21,17 @@ Keep the newest version on top. Under each version, group lines under
 _Work in progress lands here, then gets stamped with a version + date on release._
 
 ### Added
+- **External metadata lookup (🔎 per row).** A lookup button on each analyzed row
+  queries three public music APIs by artist/title (parsed from the tags / title /
+  filename, remix descriptor included): **Discogs** (`DISCOGS_TOKEN`) release
+  styles, **MusicBrainz** (no key; recording genres/tags, 1 req/s + descriptive
+  User-Agent per their etiquette), and **Last.fm** (`LASTFM_KEY`) track top tags.
+  `GET /lookup/<hash>` queries only sources whose keys are configured, degrades
+  per-source (5s timeouts, failures reported not fatal), and caches every hit
+  **permanently** in a new `lookup_cache` table so a repeat click never re-queries.
+  Suggestions render source-attributed under the row, each with **tag** (apply as a
+  track tag) and **train** (record as a training label + copy the audio). API
+  endpoints only — no HTML scraping. Parsers live in `vibedentify/lookup.py`.
 - **Segment-level overrides (shift-drag the waveform).** Shift-drag a time range
   on any track's waveform to label just that section a genre. A floating "override
   section as [genre]" menu appears; confirming (1) records the span in a new

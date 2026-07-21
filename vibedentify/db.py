@@ -46,6 +46,11 @@ def init_db():
         # the waveform repaints the span; also drives ffmpeg clip extraction.
         c.execute("""CREATE TABLE IF NOT EXISTS segment_overrides(
             hash TEXT, start_s REAL, end_s REAL, genre TEXT, created REAL)""")
+        # external metadata-lookup cache: one row per (track, source). External
+        # hits are cached permanently so a repeat click never re-queries the API.
+        c.execute("""CREATE TABLE IF NOT EXISTS lookup_cache(
+            hash TEXT, source TEXT, response_json TEXT, fetched REAL,
+            UNIQUE(hash, source))""")
         # migration: weighted vibe membership (Rocchio relevance feedback).
         # Older DBs have vibe_tracks(vibe_id, hash) only; add the weight column.
         cols = {r[1] for r in c.execute("PRAGMA table_info(vibe_tracks)")}

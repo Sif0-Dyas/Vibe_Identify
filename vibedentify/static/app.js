@@ -792,6 +792,34 @@ function finishRow(row, data, file){
     refreshFooter();
   });
 
+  /* ---- 🔎 external metadata lookup (Discogs / MusicBrainz / Last.fm) ---- */
+  const lookupBtn = document.createElement('button');
+  lookupBtn.className = 'override-btn lookup-btn';
+  lookupBtn.textContent = '🔎 lookup';
+  lookupBtn.title = 'look up genres/tags for this track from Discogs, MusicBrainz & Last.fm';
+  row.children[2].appendChild(lookupBtn);
+
+  const lookupPanel = document.createElement('div');
+  lookupPanel.className = 'lookup-panel';
+  lookupPanel.style.display = 'none';
+  row.children[2].appendChild(lookupPanel);
+
+  let lookupLoaded = false;
+  lookupBtn.addEventListener('click', async () => {
+    if (lookupPanel.style.display !== 'none'){ lookupPanel.style.display = 'none'; return; }
+    lookupPanel.style.display = '';
+    if (lookupLoaded) return;
+    const res = getResult();
+    const hash = data.hash || (res && res.hash);
+    if (!hash){ lookupPanel.innerHTML = '<div class="lk-note">no hash for this track yet</div>'; return; }
+    lookupPanel.innerHTML = '<div class="lk-note">searching Discogs · MusicBrainz · Last.fm…</div>';
+    let j;
+    try { j = await fetch(`/lookup/${hash}`).then(r => r.json()); }
+    catch(_){ lookupPanel.innerHTML = '<div class="lk-note">lookup failed</div>'; return; }
+    lookupLoaded = true;
+    renderLookup(lookupPanel, row, hash, j);
+  });
+
   const editor = document.createElement('div');
   editor.className = 'override-editor';
   editor.style.display = 'none';
@@ -1373,6 +1401,70 @@ async function renderTags(row, hash){
     });
     holder.appendChild(add);
   } catch(e){ /* tags are best-effort; never break the row */ }
+}
+
+/* Apply a tag by NAME idempotently: create it if new, then toggle it ON only if
+   it isn't already on the track (so re-applying never removes it). */
+async function applyTagByName(hash, name){
+  const cr = await fetch('/tags', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
+  if (!cr.ok) return false;
+  const t = await cr.json();
+  const mine = await fetch(`/tags/for/${hash}`).then(r => r.ok ? r.json() : []);
+  if (!mine.some(x => x.id === t.id)){
+    await fetch('/tags/toggle', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({tag_id: t.id, hash})});
+  }
+  await fetchTags(true);
+  return true;
+}
+
+/* Render the external-lookup suggestions panel: source-attributed groups, each
+   suggestion offering "tag" (apply as a tag) and "train" (record as a training
+   label + copy the audio into that genre's folder). */
+function renderLookup(panel, row, hash, j){
+  const SOURCES = [['discogs','Discogs'], ['musicbrainz','MusicBrainz'], ['lastfm','Last.fm']];
+  const q = j.query || {};
+  panel.innerHTML = `<div class="lk-q">searched as <b>${escapeHtml(q.artist || '?')}</b> — ` +
+    `<b>${escapeHtml(q.title || '?')}</b>${q.remix ? ` <i>(${escapeHtml(q.remix)})</i>` : ''}</div>`;
+  let any = false;
+  for (const [key, label] of SOURCES){
+    const items = (j.results && j.results[key]) || null;
+    const err = j.errors && j.errors[key];
+    const grp = document.createElement('div');
+    grp.className = 'lk-src';
+    const note = err ? `<span class="lk-err">${escapeHtml(err)}</span>`
+                     : ((items && items.length) ? '' : '<span class="lk-err">no matches</span>');
+    grp.innerHTML = `<div class="lk-srchd"><span>${label}</span>${note}</div>`;
+    for (const it of (items || [])){
+      any = true;
+      const chip = document.createElement('div');
+      chip.className = 'lk-item';
+      chip.innerHTML = `<span class="lk-name">${escapeHtml(it.name)}</span>` +
+        (it.count != null ? `<span class="lk-count">${escapeHtml(String(it.count))}</span>` : '') +
+        `<button class="lk-act lk-tag" type="button" title="add as a tag on this track">tag</button>` +
+        `<button class="lk-act lk-train" type="button" title="record as a training label + copy the audio into that genre's training folder">train</button>`;
+      chip.querySelector('.lk-tag').addEventListener('click', async e => {
+        const b = e.target; b.disabled = true;
+        const ok = await applyTagByName(hash, it.name);
+        b.textContent = ok ? 'tagged ✓' : 'failed';
+        if (ok) renderTags(row, hash);
+      });
+      chip.querySelector('.lk-train').addEventListener('click', async e => {
+        const b = e.target; b.disabled = true;
+        try {
+          const r = await fetch('/training/confirm', {method:'POST',
+            headers:{'Content-Type':'application/json'}, body: JSON.stringify({hash, genre: it.name})});
+          b.textContent = r.ok ? 'trained ✓' : 'failed';
+        } catch(_){ b.textContent = 'failed'; }
+      });
+      grp.appendChild(chip);
+    }
+    panel.appendChild(grp);
+  }
+  if (!any && !Object.keys(j.errors || {}).length){
+    panel.insertAdjacentHTML('beforeend', '<div class="lk-note">no suggestions found</div>');
+  }
 }
 
 /* =========================================================

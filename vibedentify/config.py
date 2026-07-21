@@ -35,3 +35,8 @@ AUDIO_EXTS = {
     ".dsf",
 }
 FAKE = os.environ.get("FAKE_ANALYZER") == "1"
+
+# Optional external metadata-lookup API credentials (the 🔎 per-row lookup).
+# Absent -> that source is simply skipped; the feature degrades per-source.
+DISCOGS_TOKEN = os.environ.get("DISCOGS_TOKEN", "").strip()
+LASTFM_KEY = os.environ.get("LASTFM_KEY", "").strip()

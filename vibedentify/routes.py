@@ -10,7 +10,7 @@ from pathlib import Path
 
 from flask import Blueprint, Response, jsonify, render_template, request, send_file
 
-from . import insight
+from . import insight, lookup
 from .analysis import (
     FINE_HOP_SECONDS,
     _lock,
@@ -599,6 +599,64 @@ def tags_toggle():
             return jsonify({"tagged": False})
         c.execute("INSERT OR IGNORE INTO track_tags VALUES(?,?)", (tid, h))
         return jsonify({"tagged": True})
+
+
+@bp.get("/lookup/<h>")
+def lookup_route(h):
+    """Look up external metadata (genres/styles/tags) for a track by artist/title
+    across Discogs, MusicBrainz, and Last.fm. Only sources with a configured key are
+    queried (MusicBrainz needs none); each source degrades independently (a timeout
+    or failure is reported for that source, never fatal). Successful responses are
+    cached PERMANENTLY per (hash, source) so a repeat click never re-queries."""
+    with _db_lock, closing(db()) as conn, conn as c:
+        row = c.execute("SELECT title, filename, payload FROM tracks WHERE hash=?", (h,)).fetchone()
+        if not row:
+            return jsonify({"error": "track not in database"}), 404
+        cached = {
+            r[0]: json.loads(r[1])
+            for r in c.execute("SELECT source, response_json FROM lookup_cache WHERE hash=?", (h,))
+        }
+    title, filename, payload = row
+    artist, track_title, remix = lookup.parse_track(
+        json.loads(payload) if payload else {}, title, filename
+    )
+
+    fetchers = {
+        "discogs": (lookup.fetch_discogs, lookup.parse_discogs),
+        "musicbrainz": (lookup.fetch_musicbrainz, lookup.parse_musicbrainz),
+        "lastfm": (lookup.fetch_lastfm, lookup.parse_lastfm),
+    }
+    conf = lookup.configured()
+    results, errors = {}, {}
+    for src, (fetch, parse) in fetchers.items():
+        if src in cached:  # permanent cache -> never re-query
+            results[src] = cached[src]
+            continue
+        if not conf.get(src):
+            errors[src] = "not configured"
+            continue
+        if not track_title:
+            errors[src] = "no title to search"
+            continue
+        raw, err = fetch(artist, track_title)  # network stays OUTSIDE the DB lock
+        if err:
+            errors[src] = err
+            continue
+        parsed = parse(raw)
+        results[src] = parsed
+        with _db_lock, closing(db()) as conn, conn as c:  # cache the hit permanently
+            c.execute(
+                "INSERT OR REPLACE INTO lookup_cache(hash, source, response_json, fetched) "
+                "VALUES(?,?,?,?)",
+                (h, src, json.dumps(parsed), time.time()),
+            )
+    return jsonify(
+        {
+            "query": {"artist": artist, "title": track_title, "remix": remix},
+            "results": results,
+            "errors": errors,
+        }
+    )
 
 
 @bp.get("/tags/for/<h>")
