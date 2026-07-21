@@ -21,6 +21,18 @@ Keep the newest version on top. Under each version, group lines under
 _Work in progress lands here, then gets stamped with a version + date on release._
 
 ### Added
+- **Labeling accelerator (`◎ label` panel).** A queue that turns building a
+  custom-genre training set from hunt-and-peck into confirm/reject. Pick or type a
+  genre and it ranks every unlabeled cached track by embedding similarity to that
+  genre's centroid (mean embedding of tracks already labelled it — via `✎ override`
+  or prior confirms), with an inline audio preview per candidate and a running
+  confirmed/rejected count. Three routes: `GET /training/candidates/<genre>?limit=`
+  (ranked hash/title/sim/bpm/camelot; a clear message when no examples exist yet),
+  `POST /training/confirm` (records the label in the new `training_labels` table and
+  copies the audio into `~/genre_training/<genre>/`, feeding the `training/`
+  pipeline), and `POST /training/reject` (records in `training_rejects` so a track
+  never resurfaces for that genre). Confirms/rejects both drop the track from future
+  queues; a confirm also clears any prior reject.
 - **Tests: `_second_style` runner-up helper.** Direct unit tests for the map's
   colour-blend helper (`vibedentify/routes.py`) — override short-circuit, exact
   weight `sc / (top_score + sc)` with its 0.5 ceiling, no-distinct-runner-up,

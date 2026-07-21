@@ -1579,6 +1579,143 @@ function escapeHtml(s){
   if (location.hash === '#review') btn.click();   // deep link: open the audit
 })();
 
+/* ---- label queue: rank unlabeled cached tracks by embedding similarity to a
+   chosen genre, then confirm ✓ / reject ✕ each into the training set. Confirms
+   are copied into ~/genre_training/<genre>/ (the custom-head pipeline's input)
+   and recorded so the queue keeps sharpening; rejects never resurface. ---- */
+(() => {
+  const btn = document.getElementById('label-btn');
+  const panel = document.getElementById('label-panel');
+  const body = document.getElementById('label-body');
+  const closeB = document.getElementById('label-close');
+  if (!btn || !panel) return;
+  closeB && closeB.addEventListener('click', () => panel.classList.remove('open'));
+
+  let genreOpts = null;                 // cached datalist options (fetched once)
+  let confirmed = 0, rejected = 0;      // running session counts, per loaded queue
+
+  async function loadGenreOptions(){
+    if (genreOpts) return genreOpts;
+    try {
+      const data = await fetch('/map').then(r => r.json());
+      const set = new Set();
+      for (const n of (data.nodes || [])) if (n.style) set.add(n.style);
+      genreOpts = [...set].sort();
+    } catch(_){ genreOpts = []; }
+    return genreOpts;
+  }
+
+  function updateCount(genre){
+    const el = body.querySelector('#lbl-count');
+    if (el) el.textContent = `${genre} — ✓ ${confirmed} confirmed · ✕ ${rejected} rejected`;
+  }
+
+  // a lightweight preview button driving the SHARED player singleton (one track
+  // at a time; taking over resets whichever row/candidate was playing before).
+  function candPlayer(hash){
+    const b = document.createElement('button');
+    b.className = 'lbl-play'; b.type = 'button'; b.textContent = '▶'; b.title = 'preview';
+    const isActive = () => PLAYER.ctl === ctl;
+    const ctl = {
+      tick(){},
+      render(){ b.textContent = (isActive() && !PLAYER.audio.paused && !PLAYER.audio.ended) ? '❙❙' : '▶'; },
+      stopVisual(){ b.textContent = '▶'; },
+      error(){ b.textContent = '✕'; b.disabled = true; b.title = 'no server-side audio for this track'; },
+    };
+    b.addEventListener('click', async () => {
+      if (isActive() && !PLAYER.audio.paused){ PLAYER.audio.pause(); return; }
+      if (!isActive()){
+        if (PLAYER.ctl) PLAYER.ctl.stopVisual();
+        PLAYER.ctl = ctl;
+        PLAYER.audio.src = '/audio/' + hash;
+      }
+      try { await PLAYER.audio.play(); } catch(_){ /* 'error' event drives the UI */ }
+      ctl.render();
+    });
+    return b;
+  }
+
+  function candidateRow(genre, cnd){
+    const d = document.createElement('div');
+    d.className = 'lbl-row';
+    const meta = [cnd.bpm ? `${cnd.bpm.toFixed(0)} BPM` : '', cnd.camelot || ''].filter(Boolean).join(' · ');
+    d.innerHTML =
+      `<span class="lbl-sim">${(cnd.sim * 100).toFixed(0)}%</span>` +
+      `<div class="lbl-main"><b title="${escapeHtml(cnd.title)}">${escapeHtml(cnd.title)}</b>` +
+        (meta ? `<span class="lbl-meta">${escapeHtml(meta)}</span>` : '') + `</div>` +
+      `<div class="lbl-acts"></div>`;
+    const acts = d.querySelector('.lbl-acts');
+    acts.appendChild(candPlayer(cnd.hash));
+    const yes = document.createElement('button');
+    yes.className = 'lbl-yes'; yes.type = 'button'; yes.textContent = '✓'; yes.title = 'confirm into training data';
+    const no = document.createElement('button');
+    no.className = 'lbl-no'; no.type = 'button'; no.textContent = '✕'; no.title = 'reject (never resurface for this genre)';
+    const post = async (url) => {
+      yes.disabled = no.disabled = true;
+      try {
+        await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({hash: cnd.hash, genre})});
+        return true;
+      } catch(_){ yes.disabled = no.disabled = false; return false; }
+    };
+    yes.addEventListener('click', async () => {
+      if (!await post('/training/confirm')) return;
+      confirmed++; updateCount(genre); d.classList.add('done-yes'); setTimeout(() => d.remove(), 180);
+    });
+    no.addEventListener('click', async () => {
+      if (!await post('/training/reject')) return;
+      rejected++; updateCount(genre); d.classList.add('done-no'); setTimeout(() => d.remove(), 180);
+    });
+    acts.appendChild(yes); acts.appendChild(no);
+    return d;
+  }
+
+  async function loadQueue(genre){
+    if (!genre) return;
+    confirmed = 0; rejected = 0; updateCount(genre);
+    const queue = body.querySelector('#lbl-queue');
+    queue.innerHTML = `<div class="flag-note">ranking your library…</div>`;
+    let data;
+    try { data = await fetch(`/training/candidates/${encodeURIComponent(genre)}?limit=25`).then(r => r.json()); }
+    catch(_){ queue.innerHTML = `<div class="flag-note">failed to load candidates</div>`; return; }
+    if (data.error){ queue.innerHTML = `<div class="flag-note">${escapeHtml(data.error)}</div>`; return; }
+    if (data.message){ queue.innerHTML = `<div class="flag-note">${escapeHtml(data.message)}</div>`; return; }
+    const cands = data.candidates || [];
+    if (!cands.length){
+      queue.innerHTML = `<div class="flag-note">No unlabeled candidates left for “${escapeHtml(genre)}”. 🎉</div>`;
+      return;
+    }
+    queue.innerHTML = '';
+    for (const cnd of cands) queue.appendChild(candidateRow(genre, cnd));
+  }
+
+  function shell(){
+    body.innerHTML =
+      `<div class="lbl-pick">` +
+        `<input id="lbl-genre" type="text" list="lbl-genres" autocomplete="off" spellcheck="false" placeholder="genre to label (e.g. Riddim)">` +
+        `<datalist id="lbl-genres"></datalist>` +
+        `<button id="lbl-go" type="button">load queue</button>` +
+      `</div>` +
+      `<div class="lbl-count" id="lbl-count"></div>` +
+      `<div class="lbl-queue" id="lbl-queue">` +
+        `<p class="sib-note">Pick or type a genre, then confirm ✓ / reject ✕ each ranked
+         candidate. The queue is ordered by how close each track sounds to the ones you've
+         already labelled that genre (via ✎ override or earlier confirms). Confirms copy the
+         audio into <code>~/genre_training/&lt;genre&gt;/</code> for the custom-head trainer.</p>` +
+      `</div>`;
+    const input = body.querySelector('#lbl-genre');
+    loadGenreOptions().then(list => {
+      const dl = body.querySelector('#lbl-genres');
+      if (dl) dl.innerHTML = list.map(g => `<option value="${escapeHtml(g)}"></option>`).join('');
+    });
+    body.querySelector('#lbl-go').addEventListener('click', () => loadQueue(input.value.trim()));
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') loadQueue(input.value.trim()); });
+    input.focus();
+  }
+
+  btn.addEventListener('click', () => { shell(); panel.classList.add('open'); });
+})();
+
 /* ===================================================================
    Guide tab: fetch docs/USAGE.md (via /guide) and render it in-app with a
    small dependency-free Markdown converter (headings, lists w/ nesting,

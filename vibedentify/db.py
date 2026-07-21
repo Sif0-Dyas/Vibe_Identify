@@ -33,6 +33,14 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE)""")
         c.execute("""CREATE TABLE IF NOT EXISTS track_tags(
             tag_id INTEGER, hash TEXT, UNIQUE(tag_id, hash))""")
+        # labeling accelerator: confirmed genre labels (source records HOW a label
+        # was made -- 'propagation' from the queue, room for 'override' etc.) and
+        # per-genre rejects so a rejected track never resurfaces in that queue.
+        c.execute("""CREATE TABLE IF NOT EXISTS training_labels(
+            hash TEXT, genre TEXT, source TEXT, created REAL,
+            UNIQUE(hash, genre))""")
+        c.execute("""CREATE TABLE IF NOT EXISTS training_rejects(
+            hash TEXT, genre TEXT, UNIQUE(hash, genre))""")
         # migration: weighted vibe membership (Rocchio relevance feedback).
         # Older DBs have vibe_tracks(vibe_id, hash) only; add the weight column.
         cols = {r[1] for r in c.execute("PRAGMA table_info(vibe_tracks)")}

@@ -324,6 +324,90 @@ def test_second_style_zero_top_score_no_zero_division():
     assert _second_style(payload, "Techno", None) == ["House", 1.0]
 
 
+def _analyze_tracks(client, names):
+    # analyze a set of distinct-content tracks; return their hashes in order.
+    hashes = []
+    for i, name in enumerate(names):
+        data = {"file": (io.BytesIO(_tiny_wav_bytes(sample=i + 1)), name)}
+        h = client.post("/analyze", data=data, content_type="multipart/form-data").get_json()[
+            "hash"
+        ]
+        hashes.append(h)
+    return hashes
+
+
+def test_training_candidates_empty_centroid(client):
+    # tracks exist but none are labelled the genre -> no centroid -> a clear
+    # message (not an error), and an empty candidate list.
+    _analyze_tracks(client, ("t1.wav", "t2.wav"))
+    r = client.get("/training/candidates/Riddim")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["labeled"] == 0
+    assert body["candidates"] == []
+    assert body.get("message")  # non-empty guidance string
+
+
+def test_training_candidates_rank_and_exclusions(client):
+    hashes = _analyze_tracks(client, ("a.wav", "b.wav", "c.wav", "d.wav"))
+    # seed the genre centroid by overriding one track to it
+    seed = hashes[0]
+    assert client.post(f"/override/{seed}", json={"genre": "Riddim"}).status_code == 200
+
+    body = client.get("/training/candidates/Riddim").get_json()
+    assert body["labeled"] >= 1
+    cands = body["candidates"]
+    assert cands, "the remaining tracks should be ranked as candidates"
+    ch = [c["hash"] for c in cands]
+    assert seed not in ch  # the override-labelled track is excluded
+
+    # ordering exists and is by descending similarity
+    sims = [c["sim"] for c in cands]
+    assert sims == sorted(sims, reverse=True)
+    # every candidate carries the promised shape
+    for c in cands:
+        for key in ("hash", "title", "sim", "bpm", "camelot"):
+            assert key in c
+
+    # reject one -> it never resurfaces for this genre
+    victim = ch[0]
+    assert (
+        client.post("/training/reject", json={"hash": victim, "genre": "Riddim"}).status_code == 200
+    )
+    ch2 = [c["hash"] for c in client.get("/training/candidates/Riddim").get_json()["candidates"]]
+    assert victim not in ch2
+
+    # confirm another -> recorded as a label, so it drops out of the queue too
+    keep = ch2[0]
+    r = client.post("/training/confirm", json={"hash": keep, "genre": "Riddim"})
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+    ch3 = [c["hash"] for c in client.get("/training/candidates/Riddim").get_json()["candidates"]]
+    assert keep not in ch3
+
+
+def test_training_confirm_reject_validation(client):
+    # both routes require hash + genre; confirm 404s on an unknown track.
+    assert client.post("/training/confirm", json={}).status_code == 400
+    assert client.post("/training/reject", json={}).status_code == 400
+    assert (
+        client.post("/training/confirm", json={"hash": "nope", "genre": "Riddim"}).status_code
+        == 404
+    )
+
+
+def test_training_confirm_clears_prior_reject(client):
+    # a confirm on a previously-rejected track wins: it becomes a label and the
+    # stale reject is cleared (so it's excluded as a label, not resurrected).
+    (h,) = _analyze_tracks(client, ("solo.wav",))
+    assert client.post("/training/reject", json={"hash": h, "genre": "Riddim"}).status_code == 200
+    r = client.post("/training/confirm", json={"hash": h, "genre": "Riddim"})
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+    # now labelled: it seeds the centroid and is not offered as a candidate
+    body = client.get("/training/candidates/Riddim").get_json()
+    assert body["labeled"] >= 1
+    assert h not in [c["hash"] for c in body["candidates"]]
+
+
 def test_misread_flag_logic():
     # the core rule: a shaky read whose close neighbours agree on a different
     # family gets flagged; a confident read does not.
