@@ -347,13 +347,36 @@ def override_route(h):
 # extracts just that range into ~/genre_training/<genre>/ with ffmpeg.
 # ----------------------------------------------------------------------------
 def _segment_overrides(h):
-    """The persisted segment overrides for a track, oldest span first."""
+    """The persisted segment overrides for a track, oldest span first. Each carries
+    its rowid as ``id`` so the client can target it for removal."""
     with _db_lock, closing(db()) as conn, conn as c:
         rows = c.execute(
-            "SELECT start_s, end_s, genre FROM segment_overrides WHERE hash=? ORDER BY start_s",
+            "SELECT rowid, start_s, end_s, genre FROM segment_overrides WHERE hash=? "
+            "ORDER BY start_s",
             (h,),
         ).fetchall()
-    return [{"start_s": r[0], "end_s": r[1], "genre": r[2]} for r in rows]
+    return [{"id": r[0], "start_s": r[1], "end_s": r[2], "genre": r[3]} for r in rows]
+
+
+def _remove_segment_clip(h, genre, start, end):
+    """Best-effort delete of the training clip an override produced. Reconstructs
+    the exact path _extract_segment wrote (same genre folder + <hash>_<s>-<e><ext>,
+    ext from the track's source file). Returns True if a file was removed."""
+    with _db_lock, closing(db()) as conn, conn as c:
+        row = c.execute("SELECT filepath FROM tracks WHERE hash=?", (h,)).fetchone()
+    filepath = row[0] if row else None
+    safe = "".join(ch if ch.isalnum() or ch in " _-" else "_" for ch in genre).strip()
+    if not safe:
+        return False
+    ext = (Path(filepath).suffix.lower() if filepath else "") or ".wav"
+    dest = Path.home() / "genre_training" / safe / f"{h}_{int(round(start))}-{int(round(end))}{ext}"
+    try:
+        if dest.is_file():
+            dest.unlink()
+            return True
+    except OSError:
+        pass
+    return False
 
 
 def _extract_segment(src, safe_genre, h, start, end):
@@ -446,16 +469,18 @@ def override_segment_route():
         return jsonify({"error": "the source file for this track no longer exists on disk"}), 404
 
     with _db_lock, closing(db()) as conn, conn as c:
-        c.execute(
+        cur = c.execute(
             "INSERT INTO segment_overrides(hash, start_s, end_s, genre, created) VALUES(?,?,?,?,?)",
             (h, start, end, genre, time.time()),
         )
+        new_id = cur.lastrowid
     # ffmpeg extraction stays OUTSIDE the DB lock (subprocess + disk I/O)
     safe = "".join(ch if ch.isalnum() or ch in " _-" else "_" for ch in genre).strip()
     clip, err = _extract_segment(src, safe, h, start, end) if safe else (None, "invalid genre name")
     return jsonify(
         {
             "ok": True,
+            "id": new_id,
             "hash": h,
             "genre": genre,
             "start": start,
@@ -464,6 +489,32 @@ def override_segment_route():
             "extract_error": err,
         }
     )
+
+
+@bp.post("/override_segment/delete")
+def override_segment_delete():
+    """Remove a segment override by id: drops the DB record AND deletes the training
+    clip it produced (undoing the override should not leave the clip behind to keep
+    training the head). The client gates this behind an explicit confirm."""
+    data = request.get_json(silent=True) or {}
+    oid = data.get("id")
+    if oid is None:
+        return jsonify({"error": "id required"}), 400
+    try:
+        oid = int(oid)
+    except (TypeError, ValueError):
+        return jsonify({"error": "id must be an integer"}), 400
+    with _db_lock, closing(db()) as conn, conn as c:
+        row = c.execute(
+            "SELECT hash, start_s, end_s, genre FROM segment_overrides WHERE rowid=?", (oid,)
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "override not found"}), 404
+        c.execute("DELETE FROM segment_overrides WHERE rowid=?", (oid,))
+    h, start, end, genre = row
+    # disk I/O stays outside the DB lock
+    clip_removed = _remove_segment_clip(h, genre, start, end)
+    return jsonify({"ok": True, "deleted": 1, "clip_removed": clip_removed})
 
 
 # ----------------------------------------------------------------------------

@@ -525,7 +525,13 @@ function finishRow(row, data, file){
       const a = Math.min(sel.a, sel.b), b = Math.max(sel.a, sel.b);
       sel = null;
       redraw(null);
-      if ((b - a) * dur < 0.5){ return; }             // ignore an accidental tiny drag
+      if ((b - a) * dur < 0.5){                       // a shift-CLICK (not a drag)...
+        if (dur){                                     // ...on an existing override -> offer to remove it
+          const o = segOverrides.find(x => x.id != null && a >= x.start_s / dur && a < x.end_s / dur);
+          if (o) openRemoveMenu(o);
+        }
+        return;
+      }
       openSegMenu(a, b);
     });
     c.addEventListener('pointerleave', () => { if (sel) return; tip.style.display = 'none'; redraw(null); });
@@ -566,13 +572,48 @@ function finishRow(row, data, file){
           if (!resp.ok){ msg.textContent = j.error || 'failed'; apply.disabled = false; return; }
         } catch(_){ msg.textContent = 'request failed'; apply.disabled = false; return; }
         // persist locally + repaint the span in the manual-override style
-        segOverrides.push({start_s: s, end_s: e, genre});
+        segOverrides.push({id: j.id, start_s: s, end_s: e, genre});
         redraw(null);
         if (renderGenreCell) renderGenreCell();
         closeSegMenu();
       }
       apply.addEventListener('click', submit);
       input.addEventListener('keydown', ev => { if (ev.key === 'Enter') submit(); if (ev.key === 'Escape') closeSegMenu(); });
+    }
+
+    // ---- remove an existing override: a two-step CONFIRMATION wall (shift-click
+    // the span, then click the red Remove). Deletes the record AND its clip. ----
+    function openRemoveMenu(o){
+      closeSegMenu();
+      segMenu = document.createElement('div');
+      segMenu.className = 'segmenu';
+      segMenu.innerHTML =
+        `<div class="segmenu-lbl">remove override <b>${escapeHtml(o.genre)}</b> ` +
+          `${fmtTime(o.start_s)}–${fmtTime(o.end_s)}?</div>` +
+        `<div class="segmenu-warn">this also deletes the extracted training clip.</div>` +
+        `<div class="segmenu-row"><button class="segmenu-remove" type="button">remove</button>` +
+        `<button class="segmenu-cancel" type="button" title="keep it">cancel</button></div>` +
+        `<div class="segmenu-msg"></div>`;
+      const rect = c.getBoundingClientRect();
+      const mid = dur ? ((o.start_s + o.end_s) / 2 / dur) * rect.width : rect.width / 2;
+      segMenu.style.left = Math.max(4, Math.min(rect.width - 220, mid - 110)) + 'px';
+      container.appendChild(segMenu);
+      const msg = segMenu.querySelector('.segmenu-msg');
+      const rm = segMenu.querySelector('.segmenu-remove');
+      segMenu.querySelector('.segmenu-cancel').addEventListener('click', closeSegMenu);
+      rm.addEventListener('click', async () => {
+        rm.disabled = true; msg.textContent = 'removing…';
+        try {
+          const resp = await fetch('/override_segment/delete', {method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({id: o.id})});
+          const j = await resp.json();
+          if (!resp.ok){ msg.textContent = j.error || 'failed'; rm.disabled = false; return; }
+        } catch(_){ msg.textContent = 'request failed'; rm.disabled = false; return; }
+        segOverrides = segOverrides.filter(x => x.id !== o.id);
+        redraw(null);
+        if (renderGenreCell) renderGenreCell();
+        closeSegMenu();
+      });
     }
 
     /* fine-detail: re-analyze just this track at ~0.5s resolution on demand */

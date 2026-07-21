@@ -33,6 +33,9 @@ _Work in progress lands here, then gets stamped with a version + date on release
   `0 ≤ start < end ≤ duration`; browser-dropped tracks (no saved path) get a clear
   "needs a server-side file" message instead of a silent re-upload. The modifier
   (shift) keeps drag-select from fighting the hover magnifier / click-to-play.
+  **Shift-click** an existing override span to **remove** it behind a confirmation
+  wall (`POST /override_segment/delete {id}`) — deleting both the record and its
+  extracted training clip so an undo doesn't leave the clip behind.
 - **Labeling accelerator (`◎ label` panel).** A queue that turns building a
   custom-genre training set from hunt-and-peck into confirm/reject. Pick or type a
   genre and it ranks every unlabeled cached track by embedding similarity to that

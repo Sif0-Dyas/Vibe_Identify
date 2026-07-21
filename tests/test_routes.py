@@ -514,6 +514,34 @@ def test_override_segment_extracts_clip(client, tmp_path, monkeypatch):
     assert clips and clips[0].stat().st_size > 0
 
 
+def test_override_segment_delete(client, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    h, music = _batch_one(client, tmp_path, sample=5)
+
+    # create an override -> the response carries its id
+    r = client.post(
+        "/override_segment", json={"hash": h, "genre": "Riddim", "start": 0.0, "end": 1.0}
+    )
+    oid = r.get_json()["id"]
+    assert isinstance(oid, int)
+
+    # validation: id required, unknown id -> 404
+    assert client.post("/override_segment/delete", json={}).status_code == 400
+    assert client.post("/override_segment/delete", json={"id": 999999}).status_code == 404
+
+    # delete it (removes the record, and the clip when ffmpeg produced one)
+    d = client.post("/override_segment/delete", json={"id": oid})
+    assert d.status_code == 200 and d.get_json()["deleted"] == 1
+    if shutil.which("ffmpeg"):
+        assert d.get_json()["clip_removed"] is True
+
+    # a cache-hit re-analyze no longer ships the span
+    lines = client.post("/batch", json={"path": str(music)}).data.decode().splitlines()
+    row = next(r for r in (json.loads(x) for x in lines if x.strip()) if r.get("hash") == h)
+    assert row.get("segment_overrides") == []
+
+
 def test_misread_flag_logic():
     # the core rule: a shaky read whose close neighbours agree on a different
     # family gets flagged; a confident read does not.

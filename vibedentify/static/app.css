@@ -263,9 +263,17 @@ input[type=file]{display:none}
   background:var(--panel); border:1px solid var(--line); color:var(--dim); cursor:pointer; flex:none;
 }
 .segmenu-apply:hover{ color:var(--text); border-color:var(--accent-a); }
-.segmenu-cancel:hover{ color:var(--err); border-color:var(--err); }
+.segmenu-cancel:hover{ color:var(--text); border-color:var(--dim); }
 .segmenu-row button:disabled{ opacity:.5; cursor:default; }
 .segmenu-msg{ font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--dim); margin-top:5px; min-height:1px; line-height:1.4; }
+/* remove-override confirmation (destructive) */
+.segmenu-warn{ font-family:'JetBrains Mono',monospace; font-size:10px; color:#ffb03b; margin-bottom:6px; line-height:1.4; }
+.segmenu-remove{
+  font-family:'JetBrains Mono',monospace; font-size:11px; padding:4px 10px; border-radius:5px;
+  background:var(--panel); border:1px solid var(--err); color:var(--err); cursor:pointer; flex:none;
+}
+.segmenu-remove:hover{ background:var(--err); color:#fff; }
+.segmenu-remove:disabled{ opacity:.5; cursor:default; }
 .wavehint .restag{color:var(--text)}
 .finebtn{
   font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--trance);
