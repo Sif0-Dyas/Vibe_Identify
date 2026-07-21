@@ -221,6 +221,12 @@ _Work in progress lands here, then gets stamped with a version + date on release
   row. A brief "skipped N …" note shows in the footer.
 
 ### Fixed
+- **Sharper waveforms.** The amplitude envelope was drawn with nearest-neighbour
+  sampling over 240 bins, so it looked blocky/pixelated on wide or hi-DPI canvases.
+  It now **interpolates between samples** (smooth for every track, including
+  already-cached ones), and the analyzer captures **720 bins** instead of 240 for
+  genuinely finer detail on newly-analyzed tracks (re-analyze to upgrade an old
+  one; the higher count doesn't invalidate any cached genre analysis).
 - **`/map` no longer builds the full pairwise cosine matrix.** It only keeps the
   top-2 neighbours per node, so the similarity search now runs in row-blocks and
   pulls each row's top-K (via `argpartition`) instead of allocating the whole

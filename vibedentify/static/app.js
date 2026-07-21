@@ -256,8 +256,12 @@ function drawWave(canvas, peaks, fallbackColor, segments, focus, mainSet, overri
   for (let px = 0; px < cols; px++){
     const sx = px / (cols - 1);
     const f = Math.max(0, Math.min(1, lens(sx)));
-    const pi = Math.min(Math.floor(f * peaks.length), peaks.length - 1);
-    const amp = Math.max(peaks[Math.max(pi, 0)] * mid, 1.0);
+    // linearly interpolate the envelope between peak samples so it reads as a
+    // smooth waveform instead of blocky steps (esp. on wide / hi-DPI canvases).
+    const fp = f * (peaks.length - 1);
+    const i0 = Math.floor(fp), i1 = Math.min(i0 + 1, peaks.length - 1);
+    const val = peaks[i0] + (peaks[i1] - peaks[i0]) * (fp - i0);
+    const amp = Math.max(val * mid, 1.0);
     let color = fallbackColor, label = null;
     if (segN){
       const segIdx = Math.min(Math.floor(f * segN), segN - 1);

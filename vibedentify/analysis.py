@@ -240,7 +240,7 @@ CAMELOT = {  # (key, scale) -> Camelot wheel position; enharmonics included
     ("D", "minor"): "7A",
 }
 
-WAVE_BINS = 240
+WAVE_BINS = 720  # amplitude envelope resolution; higher = finer waveform detail
 
 
 def waveform_peaks(audio, bins=WAVE_BINS):
