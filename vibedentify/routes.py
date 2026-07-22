@@ -52,7 +52,7 @@ bp = Blueprint("main", __name__)
 # Unset (the default: the normal browser workflow and the tests) => no auth, so
 # behaviour is completely unchanged.
 _AUTH_TOKEN = os.environ.get("GENRE_TOKEN", "")
-_TOKEN_COOKIE = "vibe_token"
+_TOKEN_COOKIE = "vibe_token"  # nosec B105  # cookie NAME (not a secret); the value is _AUTH_TOKEN
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
 
 
