@@ -22,17 +22,29 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
+import socket
 import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 
 # --------------------------------------------------------------------------- #
 # Config — the only machine-specific knobs.
 # --------------------------------------------------------------------------- #
-PORT = int(os.environ.get("GENRE_PORT", "5005"))
+# Port for this launch. If GENRE_PORT is set we honour it (a fixed custom port);
+# otherwise configure() picks a free loopback port at launch so there is no
+# predictable, well-known port sitting open. BASE_URL is recomputed in configure().
+_FIXED_PORT = os.environ.get("GENRE_PORT")
+PORT = int(_FIXED_PORT) if _FIXED_PORT else 5005
 BASE_URL = f"http://127.0.0.1:{PORT}"
+
+# Per-session shared secret. The backend (when handed GENRE_TOKEN) requires it on
+# every request, so other local processes and malicious localhost web pages can't
+# drive the API. A fresh random token is generated per launch unless one is given.
+TOKEN = os.environ.get("GENRE_TOKEN", "")
 
 # Windows-side location of the project = the folder that contains this desktop/
 # dir. Deriving it from the script's own location (not a hardcoded path) means the
@@ -84,11 +96,32 @@ def win_to_wsl(path: str) -> str | None:
 WSL_PROJECT = win_to_wsl(WIN_PROJECT) or WIN_PROJECT
 
 
+def _free_loopback_port() -> int:
+    """Ask the OS for an unused loopback port (bind :0, read it, release)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def configure():
+    """Fix the port + token for this launch: a free loopback port unless the user
+    pinned GENRE_PORT, and a fresh per-session secret unless GENRE_TOKEN was set."""
+    global PORT, BASE_URL, TOKEN
+    if not _FIXED_PORT:
+        PORT = _free_loopback_port()
+    BASE_URL = f"http://127.0.0.1:{PORT}"
+    if not TOKEN:
+        TOKEN = secrets.token_urlsafe(24)
+
+
 def backend_up() -> bool:
-    """True if something is answering on the app's port."""
+    """True if something is answering on the app's port. A 4xx (e.g. the 403 from
+    the auth guard when we probe without the token) still means the server is up."""
     try:
         with urllib.request.urlopen(BASE_URL + "/", timeout=2) as r:
             return r.status < 500
+    except urllib.error.HTTPError as e:
+        return e.code < 500
     except Exception:
         return False
 
@@ -99,9 +132,12 @@ def _wsl_cmd() -> list[str]:
     cmd = ["wsl.exe"]
     if WSL_DISTRO:
         cmd += ["-d", WSL_DISTRO]
-    cmd += ["--cd", WSL_PROJECT, "--"]
+    # `env VAR=... ` in front of the interpreter injects config into the WSL
+    # process. (The space in --cd's path is safe: this is a real argv, not a shell
+    # line.) The backend reads GENRE_PORT (bind) and GENRE_TOKEN (require on auth).
+    cmd += ["--cd", WSL_PROJECT, "--", "env", f"GENRE_PORT={PORT}", f"GENRE_TOKEN={TOKEN}"]
     if FAKE:
-        cmd += ["env", "FAKE_ANALYZER=1"]
+        cmd += ["FAKE_ANALYZER=1"]
     cmd += [WSL_PYTHON, "-m", "vibedentify"]
     return cmd
 
@@ -125,6 +161,34 @@ def start_backend() -> subprocess.Popen | None:
         return None  # wsl.exe not on PATH
 
 
+_STARTED_BY_US = False  # True once we launch our own backend, so we can stop it
+
+
+def _shutdown_backend():
+    """Stop the backend we started, killing precisely by port so we never touch a
+    server the user launched themselves on another port. No-op if we reused one."""
+    if not _STARTED_BY_US:
+        return
+    kill = (
+        f"fuser -k {PORT}/tcp 2>/dev/null || "
+        f"(command -v lsof >/dev/null && kill $(lsof -ti tcp:{PORT}) 2>/dev/null)"
+    )
+    cmd = ["wsl.exe"]
+    if WSL_DISTRO:
+        cmd += ["-d", WSL_DISTRO]
+    cmd += ["--", "bash", "-lc", kill]
+    try:
+        subprocess.run(
+            cmd,
+            creationflags=CREATE_NO_WINDOW,
+            timeout=10,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+
+
 # --------------------------------------------------------------------------- #
 # The JS shim injected into the live page (only inside this shell). It wires the
 # native folder picker to the app's existing runBatch(), and adds an "add files"
@@ -136,6 +200,13 @@ INJECT_JS = r"""
   if (!window.pywebview || !window.pywebview.api) return;
   window.__vibeDesk = true;
   document.body.classList.add('desktop-shell');
+
+  // Drop the one-time ?k=<token> from the address so it isn't left in history.
+  try {
+    if (location.search.indexOf('k=') !== -1) {
+      history.replaceState({}, '', location.pathname + location.hash);
+    }
+  } catch (e) {}
 
   // 1) Intercept the "batch folder" button BEFORE its own prompt() handler runs.
   //    A capture-phase listener on document fires ahead of the target's own
@@ -253,17 +324,20 @@ class Api:
 def _boot_and_load(window):
     """Runs in pywebview's worker thread once the GUI is up: ensure the backend
     is answering, then navigate the window to the real app."""
+    global _STARTED_BY_US
     started = False
     if not backend_up():
         if start_backend() is None:
             window.load_html(error_html("<b>wsl.exe was not found on PATH.</b>"))
             return
-        started = True
+        started = _STARTED_BY_US = True
 
     deadline = time.time() + BOOT_TIMEOUT_S
     while time.time() < deadline:
         if backend_up():
-            window.load_url(BASE_URL)  # -> triggers 'loaded' -> INJECT_JS
+            # first navigation carries the token as ?k=; the backend promotes it
+            # to an httponly cookie and INJECT_JS strips it back off the URL.
+            window.load_url(f"{BASE_URL}/{('?k=' + TOKEN) if TOKEN else ''}")
             return
         time.sleep(0.6)
 
@@ -279,6 +353,7 @@ def _boot_and_load(window):
 def main():
     import webview
 
+    configure()  # pick this launch's port + token before anything uses BASE_URL
     api = Api()
     window = webview.create_window(
         "Vibedentify",
@@ -301,6 +376,7 @@ def main():
 
     window.events.loaded += on_loaded
     webview.start(_boot_and_load, window)
+    _shutdown_backend()  # window closed -> stop the backend we launched
 
 
 # --------------------------------------------------------------------------- #
@@ -335,11 +411,19 @@ def _selftest() -> int:
     check("WSL_PROJECT == win_to_wsl(WIN_PROJECT)", WSL_PROJECT, win_to_wsl(WIN_PROJECT))
     check("WSL_PROJECT under /mnt/", WSL_PROJECT.startswith("/mnt/"), True)
 
+    print("port + token (configure):")
+    configure()
+    check("free port is int > 1024", isinstance(PORT, int) and PORT > 1024, True)
+    check("base url tracks port", BASE_URL, f"http://127.0.0.1:{PORT}")
+    check("token generated", len(TOKEN) >= 24, True)
+
     print("wsl launch command:")
     cmd = _wsl_cmd()
     print("  ", cmd)
     # the project path must be one intact argv element (space preserved)
     check("project is one arg", WSL_PROJECT in cmd, True)
+    check("passes GENRE_PORT", f"GENRE_PORT={PORT}" in cmd, True)
+    check("passes GENRE_TOKEN", f"GENRE_TOKEN={TOKEN}" in cmd, True)
     check("runs the module", cmd[-3:], [WSL_PYTHON, "-m", "vibedentify"])
 
     print("PASS" if ok else "FAIL")

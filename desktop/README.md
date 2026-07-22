@@ -48,7 +48,8 @@ overridable by an environment variable:
 | `WIN_PROJECT` | `GENRE_WIN_PROJECT` | *auto-detected: the folder containing `desktop/`* |
 | `WSL_PYTHON` | `GENRE_WSL_PYTHON` | `/home/euphy/genre/bin/python` |
 | `WSL_DISTRO` | `GENRE_WSL_DISTRO` | *(default distro)* |
-| `PORT` | `GENRE_PORT` | `5005` |
+| `PORT` | `GENRE_PORT` | *random free loopback port* (set to pin one) |
+| `TOKEN` | `GENRE_TOKEN` | *fresh per-session secret* (set to pin one) |
 | `FAKE` | `GENRE_DESKTOP_FAKE=1` | off (real Essentia) |
 
 `WSL_PROJECT` (the `/mnt/c/...` path) is derived from `WIN_PROJECT`, which in turn
@@ -58,13 +59,37 @@ of the app it ships with (this branch/worktree, or the original checkout).
 Set `GENRE_DESKTOP_FAKE=1` to boot the backend in fake-analyzer mode (instant
 results, no model load) — handy for trying the window itself.
 
+## Security model
+
+This branch runs the backend **locked down**, so it isn't just "a web server on
+localhost anyone on your PC can poke":
+
+- **Random loopback port.** Each launch binds a fresh, unused `127.0.0.1` port
+  (WSL forwards it to Windows loopback only — never your LAN). No predictable,
+  well-known port sits open. Pin one with `GENRE_PORT` if you need it stable.
+- **Per-session secret token.** The shell generates a random token and hands it to
+  the backend (`GENRE_TOKEN`). Every request must carry it — the first navigation
+  passes `?k=<token>`, which the backend promotes to an httponly, `SameSite=Strict`
+  cookie; the shell then strips the token from the URL. Other local processes and
+  malicious localhost web pages don't have it, so they get **403**.
+- **Host-header check.** Requests not addressed to a loopback host are rejected
+  (403), defeating DNS-rebinding (a site resolving its own domain to 127.0.0.1 to
+  reach this server from your browser).
+
+All of this is **env-gated in the backend**: with no `GENRE_TOKEN` set (the
+original `main` checkout, the plain browser workflow, the test suite) the guard is
+a no-op and behavior is identical to before. Only the desktop shell turns it on.
+
+> Trade-off: because the shell's server requires the token, you can't open its
+> random port in a normal browser tab. Run `python -m vibedentify` yourself
+> (no token) for a browsable instance.
+
 ## Notes / behavior
 
-- **It reuses a running server.** If you already ran `python -m vibedentify` in
-  WSL, the shell just attaches to it. If not, it starts one and **leaves it
-  running** on close, so your browser workflow keeps working too. It never force-
-  kills the WSL process (WSL process trees are fiddly); stop it the way you
-  normally do.
+- **Own server, cleaned up.** The shell starts its own backend on the random port
+  and **stops it when you close the window** (killed precisely by port, so a server
+  you launched yourself on another port is never touched). If its port somehow
+  already answers, it just attaches and won't kill on exit.
 - **Cold start can take a while** the first time (Essentia import + model load).
   The splash waits up to `BOOT_TIMEOUT_S` (150 s) before showing a help screen.
 - **Audio playback:** folder scans store the on-disk WSL path, so playback works;

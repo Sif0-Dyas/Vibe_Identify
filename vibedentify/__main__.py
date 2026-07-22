@@ -21,8 +21,12 @@ def main():
     app = create_app()
     if os.environ.get("FAKE_ANALYZER") == "1":
         log.info("FAKE_ANALYZER=1 -- serving fake results (GUI test mode, no Essentia).")
-    log.info("Vibedentify running -> http://localhost:5005")
-    app.run(host=os.environ.get("GENRE_HOST", "127.0.0.1"), port=5005, debug=False, threaded=True)
+    host = os.environ.get("GENRE_HOST", "127.0.0.1")
+    port = int(os.environ.get("GENRE_PORT", "5005"))
+    if os.environ.get("GENRE_TOKEN"):
+        log.info("GENRE_TOKEN set -- requiring the per-session token on every request.")
+    log.info("Vibedentify running -> http://%s:%d", host, port)
+    app.run(host=host, port=port, debug=False, threaded=True)
 
 
 if __name__ == "__main__":

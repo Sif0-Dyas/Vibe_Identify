@@ -1,5 +1,6 @@
 """All HTTP routes for the app, grouped on a single Blueprint."""
 
+import hmac
 import json
 import os
 import sqlite3
@@ -8,7 +9,7 @@ import time
 from contextlib import closing, contextmanager
 from pathlib import Path
 
-from flask import Blueprint, Response, jsonify, render_template, request, send_file
+from flask import Blueprint, Response, abort, jsonify, render_template, request, send_file
 
 from . import insight, lookup
 from .analysis import (
@@ -40,6 +41,42 @@ from .db import (
 )
 
 bp = Blueprint("main", __name__)
+
+
+# --- optional loopback auth (used by the Windows desktop shell) --------------
+# When GENRE_TOKEN is set, every request must (a) be addressed to a loopback Host
+# -- which defeats DNS-rebinding, where a malicious site resolves its own domain
+# to 127.0.0.1 to reach this server from a browser -- and (b) carry the secret,
+# via the ?k= on the first navigation, thereafter via an httponly cookie. This
+# keeps other local processes and browser-based attacks from driving the API.
+# Unset (the default: the normal browser workflow and the tests) => no auth, so
+# behaviour is completely unchanged.
+_AUTH_TOKEN = os.environ.get("GENRE_TOKEN", "")
+_TOKEN_COOKIE = "vibe_token"
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
+
+
+@bp.before_request
+def _loopback_guard():
+    if not _AUTH_TOKEN:
+        return  # auth disabled -> unchanged behaviour
+    host = (request.host or "").rsplit(":", 1)[0]
+    if host not in _LOOPBACK_HOSTS:
+        abort(403)  # not addressed to loopback -> likely DNS-rebinding
+    supplied = request.cookies.get(_TOKEN_COOKIE) or request.args.get("k", "")
+    if not hmac.compare_digest(supplied, _AUTH_TOKEN):
+        abort(403)
+
+
+@bp.after_request
+def _promote_token_cookie(resp):
+    # Turn a valid ?k= (the first navigation) into an httponly, same-site cookie
+    # so later requests authenticate on their own, without the token in the URL.
+    if _AUTH_TOKEN and hmac.compare_digest(request.args.get("k", ""), _AUTH_TOKEN):
+        resp.set_cookie(
+            _TOKEN_COOKIE, _AUTH_TOKEN, httponly=True, samesite="Strict", path="/"
+        )
+    return resp
 
 
 # ----------------------------------------------------------------------------
