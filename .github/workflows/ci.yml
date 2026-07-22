@@ -63,3 +63,10 @@ jobs:
         env:
           FAKE_ANALYZER: "1"
         run: pytest -q --cov=vibedentify --cov-fail-under=50
+
+      - name: Desktop shell selftest
+        # Exercises the WSL/Windows path-translation + launch-command logic in
+        # desktop/genre_app.pyw. Its --selftest path is pure stdlib (pywebview is
+        # imported lazily only inside main()), so it needs no extra CI deps, and
+        # ntpath keeps win_to_wsl correct on this Linux runner.
+        run: python desktop/genre_app.pyw --selftest

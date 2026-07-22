@@ -20,13 +20,13 @@ edit for a different machine or WSL user.
 
 from __future__ import annotations
 
+import ntpath
 import os
 import re
 import secrets
 import socket
 import subprocess
 import sys
-import threading
 import time
 import urllib.error
 import urllib.request
@@ -83,7 +83,11 @@ def win_to_wsl(path: str) -> str | None:
     """
     if not path:
         return None
-    p = os.path.abspath(path)
+    # ntpath (not os.path) so this is correct off Windows too: os.path.abspath on
+    # POSIX treats "C:\\..." as relative and prepends the CWD, mangling the drive
+    # path; ntpath.abspath keeps Windows semantics on every platform, so the
+    # --selftest (and thus CI on Linux) exercises the real translation.
+    p = ntpath.abspath(path)
     m = re.match(r"^([A-Za-z]):[\\/](.*)$", p)
     if not m:
         return None
@@ -244,22 +248,35 @@ INJECT_JS = r"""
 LOADING_HTML = """
 <!doctype html><meta charset="utf-8">
 <title>Vibedentify</title>
+<!-- Palette taken from the ACTIVE :root in vibedentify/static/app.css — the
+     "Neon-DJ" theme whose :root overrides the earlier WINAMP SKIN block: chassis
+     --bg #06080D, panel --panel #0C1016, hairline --line #1E2632, text
+     --text #EAF2F8, dim --dim #7C8998, cyan --accent-a #22D3EE + violet
+     --accent-b #7C5CFF, LCD --lcd #5DE9FF on well --lcd-bg #03141B. -->
 <style>
-  html,body{height:100%;margin:0;background:#0b0d12;color:#e6e9ef;
-    font:15px/1.5 'Segoe UI',system-ui,sans-serif;display:grid;place-items:center}
-  .box{text-align:center}
-  .dot{width:9px;height:9px;border-radius:50%;background:#5ac8fa;display:inline-block;
-    margin:0 3px;animation:p 1s infinite ease-in-out}
+  html,body{height:100%;margin:0;background:#06080D;color:#EAF2F8;
+    font:15px/1.5 system-ui,'Segoe UI',sans-serif;display:grid;place-items:center}
+  /* flat panel + hairline border + cyan glow, matching the Neon-DJ chassis */
+  .box{text-align:center;background:#0C1016;padding:28px 44px;
+    border:1px solid #1E2632;border-radius:12px;box-shadow:0 0 10px rgba(34,211,238,.35)}
+  /* wordmark: cyan->violet gradient text with a cyan glow, like the app header */
+  h1{margin:0 0 6px;font-weight:800;letter-spacing:-.01em;color:#22D3EE;
+    background:linear-gradient(90deg,#22D3EE,#7C5CFF);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+    filter:drop-shadow(0 0 10px rgba(34,211,238,.5))}
+  p{color:#7C8998;margin:.3em 0}
+  /* dark cyan-tinted LCD well holding the readout dots, like the app's BPM cell */
+  .lcd{display:inline-block;margin-top:12px;padding:9px 13px;background:#03141B;
+    border:1px solid rgba(34,211,238,.20);border-radius:6px}
+  .dot{width:9px;height:9px;border-radius:50%;background:#5DE9FF;display:inline-block;
+    margin:0 3px;box-shadow:0 0 8px rgba(93,233,255,.7);animation:p 1s infinite ease-in-out}
   .dot:nth-child(2){animation-delay:.15s}.dot:nth-child(3){animation-delay:.3s}
   @keyframes p{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-5px)}}
-  h1{font-weight:600;letter-spacing:.5px;margin:0 0 6px}
-  p{color:#9aa3b2;margin:.3em 0}
-  code{color:#c9d3e6;background:#161a22;padding:1px 6px;border-radius:5px}
 </style>
 <div class="box">
   <h1>Vibedentify</h1>
   <p id="msg">Starting the analysis engine&hellip;</p>
-  <div><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+  <div class="lcd"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
 </div>
 """
 
@@ -267,14 +284,25 @@ LOADING_HTML = """
 def error_html(detail: str) -> str:
     return f"""
 <!doctype html><meta charset="utf-8"><title>Vibedentify — can't start</title>
+<!-- Palette taken from the ACTIVE :root in vibedentify/static/app.css — the
+     "Neon-DJ" theme whose :root overrides the earlier WINAMP SKIN block: chassis
+     --bg #06080D, panel --panel #0C1016, hairline --line #1E2632, text
+     --text #EAF2F8, dim --dim #7C8998, warn/gold --gold #FFC46B, LCD --lcd
+     #5DE9FF on well --lcd-bg #03141B. -->
 <style>
-  html,body{{height:100%;margin:0;background:#0b0d12;color:#e6e9ef;
-    font:15px/1.6 'Segoe UI',system-ui,sans-serif;display:grid;place-items:center}}
-  .box{{max-width:640px;padding:0 28px}}
-  h1{{color:#ff6b6b;font-weight:600}}
-  code{{color:#c9d3e6;background:#161a22;padding:2px 7px;border-radius:6px;
-    display:inline-block;margin:2px 0}}
-  li{{margin:.4em 0}} a{{color:#5ac8fa}}
+  html,body{{height:100%;margin:0;background:#06080D;color:#EAF2F8;
+    font:15px/1.6 system-ui,'Segoe UI',sans-serif;display:grid;place-items:center}}
+  .box{{max-width:640px;padding:26px 32px;background:#0C1016;
+    border:1px solid #1E2632;border-radius:12px;box-shadow:0 0 10px rgba(34,211,238,.25)}}
+  /* amber heading — the Neon-DJ theme reserves --gold for alerts, so it reads as a warning */
+  h1{{color:#FFC46B;font-weight:800;letter-spacing:-.01em}}
+  p{{color:#7C8998}}
+  /* code shown like the app's cyan LCD readouts: on a dark cyan-tinted well, mono */
+  code{{color:#5DE9FF;background:#03141B;
+    font-family:ui-monospace,Consolas,'Courier New',monospace;
+    padding:2px 7px;border:1px solid rgba(34,211,238,.20);border-radius:5px;
+    display:inline-block;margin:2px 0;text-shadow:0 0 6px rgba(93,233,255,.4)}}
+  li{{margin:.4em 0}}
 </style>
 <div class="box">
   <h1>Couldn't reach the analysis engine</h1>
@@ -312,9 +340,7 @@ class Api:
         start_dir = os.path.join(os.path.expanduser("~"), "Music")
         if not os.path.isdir(start_dir):
             start_dir = os.path.expanduser("~")
-        result = self._window.create_file_dialog(
-            webview.FOLDER_DIALOG, directory=start_dir
-        )
+        result = self._window.create_file_dialog(webview.FOLDER_DIALOG, directory=start_dir)
         if not result:
             return ""
         win_path = result[0] if isinstance(result, (list, tuple)) else result
@@ -341,12 +367,23 @@ def _boot_and_load(window):
             return
         time.sleep(0.6)
 
-    detail = (
-        "We launched it but it never answered — the first cold start can be slow "
-        "while Essentia and the models load."
-        if started
-        else "It doesn't look like it's running."
-    )
+    # Timed out. The single most common misconfiguration is a wrong project path
+    # (the defaults below are one machine's exact folders), so if the configured
+    # Windows folder doesn't exist on disk, say that first — it's almost certainly
+    # why the backend never came up.
+    if not os.path.isdir(WIN_PROJECT):
+        detail = (
+            f"<b>the configured project folder was not found: <code>{WIN_PROJECT}</code></b>"
+            f" — edit <code>GENRE_WIN_PROJECT</code> / <code>WIN_PROJECT</code> to point at "
+            f"your checkout."
+        )
+    elif started:
+        detail = (
+            "We launched it but it never answered — the first cold start can be slow "
+            "while Essentia and the models load."
+        )
+    else:
+        detail = "It doesn't look like it's running."
     window.load_html(error_html(detail))
 
 
@@ -362,7 +399,7 @@ def main():
         width=1280,
         height=860,
         min_size=(900, 600),
-        background_color="#0b0d12",
+        background_color="#06080D",  # Neon-DJ --bg, matches the splash chassis
     )
     api.bind(window)
 
@@ -408,8 +445,20 @@ def _selftest() -> int:
 
     print("derived WSL project path:")
     print(f"  WIN_PROJECT = {WIN_PROJECT!r}")
-    check("WSL_PROJECT == win_to_wsl(WIN_PROJECT)", WSL_PROJECT, win_to_wsl(WIN_PROJECT))
-    check("WSL_PROJECT under /mnt/", WSL_PROJECT.startswith("/mnt/"), True)
+    # Assert the derivation *rule* (line: `win_to_wsl(WIN_PROJECT) or WIN_PROJECT`)
+    # rather than the concrete /mnt/ value: this selftest also runs on Linux in CI,
+    # where the auto-detected WIN_PROJECT is a POSIX path, not a `C:\...` one.
+    check(
+        "WSL_PROJECT matches its derivation rule",
+        WSL_PROJECT,
+        win_to_wsl(WIN_PROJECT) or WIN_PROJECT,
+    )
+    # And that a real Windows project path maps under /mnt/ (host-independent).
+    check(
+        "a Windows project path maps under /mnt/",
+        win_to_wsl(r"C:\Users\me\Genre Identifier - Windows"),
+        "/mnt/c/Users/me/Genre Identifier - Windows",
+    )
 
     print("port + token (configure):")
     configure()

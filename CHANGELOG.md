@@ -159,6 +159,18 @@ _Work in progress lands here, then gets stamped with a version + date on release
   `.gitignore` gains `_cache/`, `manifest.json`, `*.npz` as insurance.
 
 ### Changed
+- **Desktop shell: theme, quality gates, and honest config docs.** The `desktop/`
+  launcher's inline splash + error pages are reskinned from the old generic dark
+  look to the app's current **Neon-DJ** palette (near-black chassis, cyan LCD-well
+  loading dots + code, gradient wordmark), derived from the active `:root` in
+  `static/app.css` (a provenance comment in each page records which variables).
+  `.pyw` is now in the ruff `include` list so `ruff check` / `ruff format` cover
+  the shell (previously skipped as "no Python files"), and a `python
+  desktop/genre_app.pyw --selftest` step runs in CI (pure-stdlib, no extra deps).
+  `desktop/README.md` gains an **On a different machine** section spelling out that
+  `GENRE_WSL_PYTHON` / `GENRE_WIN_PROJECT` are one machine's exact paths and must
+  be set, and the boot-timeout error page now leads with a clear "project folder
+  not found: `<path>`" message (naming the var to fix) when `WIN_PROJECT` is wrong.
 - **Map: subgenre colours + spatial, per-cluster label detail.** Each node is now
   a distinct *shade* of its family's colour keyed to its subgenre (family hue
   ±36° plus a wide saturation/lightness wobble), and it **leans toward its 2nd
@@ -236,6 +248,13 @@ _Work in progress lands here, then gets stamped with a version + date on release
   a whole library that was originally drag-dropped.
 
 ### Fixed
+- **Desktop shell `win_to_wsl` is now portable (selftest runs on Linux/CI).** It
+  called `os.path.abspath`, which on POSIX treats `C:\...` as relative and prepends
+  the CWD, so `--selftest` failed everywhere but Windows and could never run in CI.
+  Switched to `ntpath.abspath` (identical on Windows, correct elsewhere); the two
+  environment-dependent "derived path" checks were rewritten to assert the
+  derivation *rule* instead of a host-specific value, so the full selftest passes
+  on the Linux runner.
 - **Sharper waveforms.** The amplitude envelope was drawn with nearest-neighbour
   sampling over 240 bins, so it looked blocky/pixelated on wide or hi-DPI canvases.
   It now **interpolates between samples** (smooth for every track, including
