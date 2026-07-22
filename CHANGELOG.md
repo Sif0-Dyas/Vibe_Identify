@@ -159,6 +159,15 @@ _Work in progress lands here, then gets stamped with a version + date on release
   `.gitignore` gains `_cache/`, `manifest.json`, `*.npz` as insurance.
 
 ### Changed
+- **Decomposed `analyze()` (`analysis.py`).** The 150-line function is now a short
+  orchestrator over three verbatim-extracted helpers: `_decode_and_infer` (both
+  decodes + the `_lock`-scoped model inference, lock boundary unchanged),
+  `_musical_features` (BPM/key/Camelot/duration/waveform), and `_assemble` (styles,
+  segments, salience, frames, custom, mean embedding → the payload dict). No
+  operation reordered in a way that changes behavior, no lock boundary moved, and
+  the returned dict is unchanged key-for-key; the FAKE branch is untouched. Adds
+  synthetic-input unit tests for `_musical_features` and `_assemble`, lifting
+  `analysis.py` coverage (overall suite 67% → 73%).
 - **Versioned DB schema (`db.py`).** Replaced the grown-past-useful
   create-and-patch block with a `schema_version` table and an ordered, append-only
   `MIGRATIONS` list. `init_db()` applies every migration above the DB's recorded
