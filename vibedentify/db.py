@@ -51,6 +51,11 @@ def init_db():
         c.execute("""CREATE TABLE IF NOT EXISTS lookup_cache(
             hash TEXT, source TEXT, response_json TEXT, fetched REAL,
             UNIQUE(hash, source))""")
+        # high-resolution min/max/rms waveform (DAW-style rendering). Computed once
+        # per track -- pre-filled at analysis time, or on demand from the audio file
+        # -- and cached permanently so it's never recomputed.
+        c.execute("""CREATE TABLE IF NOT EXISTS waveform_cache(
+            hash TEXT PRIMARY KEY, data_json TEXT, created REAL)""")
         # migration: weighted vibe membership (Rocchio relevance feedback).
         # Older DBs have vibe_tracks(vibe_id, hash) only; add the weight column.
         cols = {r[1] for r in c.execute("PRAGMA table_info(vibe_tracks)")}
@@ -81,6 +86,20 @@ def cache_put(h: str, filename, filepath, title, payload: dict, emb):
         c.execute(
             "INSERT OR REPLACE INTO tracks VALUES(?,?,?,?,?,?,?)",
             (h, filename, filepath or "", title, json.dumps(payload), blob, time.time()),
+        )
+
+
+def waveform_cache_get(h: str):
+    with _db_lock, closing(db()) as conn, conn as c:
+        row = c.execute("SELECT data_json FROM waveform_cache WHERE hash=?", (h,)).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def waveform_cache_put(h: str, data: dict):
+    with _db_lock, closing(db()) as conn, conn as c:
+        c.execute(
+            "INSERT OR REPLACE INTO waveform_cache(hash, data_json, created) VALUES(?,?,?)",
+            (h, json.dumps(data), time.time()),
         )
 
 

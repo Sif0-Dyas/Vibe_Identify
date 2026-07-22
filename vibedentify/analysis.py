@@ -260,6 +260,62 @@ def waveform_peaks(audio, bins=WAVE_BINS):
     return [round(float(v), 3) for v in peaks]
 
 
+WAVE_MM_BINS = 1600  # resolution of the DAW-style min/max/rms waveform
+
+
+def waveform_minmax(audio, bins=WAVE_MM_BINS):
+    """A DAW-style waveform: per time-bin minimum, maximum and RMS of the signal,
+    normalized so the loudest peak reaches full scale. min/max give the peak
+    outline (both rails from a center line), rms the loudness core. Returns
+    ``{'bins', 'min', 'max', 'rms'}`` with each list in [-1, 1] (rms in [0, 1])."""
+    import numpy as np
+
+    a = np.asarray(audio, dtype=np.float32).ravel()
+    empty = [0.0] * bins
+    if a.size == 0:
+        return {"bins": bins, "min": empty, "max": empty[:], "rms": empty[:]}
+    edges = np.linspace(0, a.size, bins + 1, dtype=int)
+    mn = np.zeros(bins, np.float32)
+    mx = np.zeros(bins, np.float32)
+    rms = np.zeros(bins, np.float32)
+    for i in range(bins):
+        seg = a[edges[i] : edges[i + 1]]
+        if seg.size:
+            mn[i], mx[i] = seg.min(), seg.max()
+            rms[i] = np.sqrt(np.mean(seg * seg))
+    peak = float(max(np.abs(mn).max(), np.abs(mx).max())) or 1.0
+    return {
+        "bins": bins,
+        "min": [round(float(v / peak), 3) for v in mn],
+        "max": [round(float(v / peak), 3) for v in mx],
+        "rms": [round(float(v / peak), 3) for v in rms],
+    }
+
+
+def load_samples_for_waveform(path):
+    """Decode an audio file to a mono float array for waveform rendering. Real mode
+    uses Essentia at a low sample rate (fast; an envelope needs no fidelity); FAKE
+    mode reads a WAV with the stdlib so tests need no models."""
+    import numpy as np
+
+    if FAKE:
+        import wave as _wave
+
+        with _wave.open(str(path), "rb") as wf:
+            ch, sw, n = wf.getnchannels(), wf.getsampwidth(), wf.getnframes()
+            raw = wf.readframes(n)
+        dt = {1: np.int8, 2: np.int16, 4: np.int32}.get(sw, np.int16)
+        a = np.frombuffer(raw, dtype=dt).astype(np.float32)
+        if ch > 1:
+            a = a.reshape(-1, ch).mean(axis=1)
+        m = float(np.abs(a).max()) or 1.0
+        return a / m
+
+    from essentia.standard import MonoLoader
+
+    return MonoLoader(filename=str(path), sampleRate=11025, resampleQuality=4)()
+
+
 def frame_topk(preds, labels, k=6):
     """Per-frame top-k predictions as [style, score] pairs -- the data the
     hysteresis and sibling-merge lenses need (winner plus near-misses)."""
@@ -356,6 +412,14 @@ def analyze(path: Path) -> dict:
         scores = sorted((rng.uniform(0.04, 0.55) for _ in range(4)), reverse=True)
         key, scale = rng.choice(list(CAMELOT.keys()))
         wave = [round(abs(math.sin(i / 9) * rng.uniform(0.4, 1.0)), 3) for i in range(WAVE_BINS)]
+        # fake DAW-style min/max/rms envelope (matches the real analyzer's shape)
+        _mx = [round(abs(math.sin(i / 23)) * rng.uniform(0.3, 1.0), 3) for i in range(WAVE_MM_BINS)]
+        wave_mm = {
+            "bins": WAVE_MM_BINS,
+            "max": _mx,
+            "min": [round(-v, 3) for v in _mx],
+            "rms": [round(v * 0.6, 3) for v in _mx],
+        }
         segments = []
         seg_styles = [pool[0]] * 3 + pool[1:3]  # mostly primary, some switches
         for _ in range(rng.randint(5, 9)):
@@ -400,6 +464,7 @@ def analyze(path: Path) -> dict:
             "key_strength": rng.uniform(0.5, 0.95),
             "duration": rng.uniform(150, 420),
             "waveform": wave,
+            "wave": wave_mm,
             "emb_mean": [rng.uniform(-1, 1) for _ in range(1280)],
         }
 
@@ -470,6 +535,7 @@ def analyze(path: Path) -> dict:
         "key_strength": key_strength,
         "duration": duration,
         "waveform": waveform_peaks(audio44),
+        "wave": waveform_minmax(audio44),  # DAW-style; cached, not stored in payload
         "emb_mean": [float(x) for x in np.mean(embeddings, axis=0)],
     }
 

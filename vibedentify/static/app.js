@@ -232,7 +232,7 @@ function addRow(file){
    focus null it draws flat. Returns nothing; purely visual.
    STRENGTH controls bulge amount; ZONE is how wide (in track-fraction) the lens
    reaches before it's back to ~1x. */
-function drawWave(canvas, peaks, fallbackColor, segments, focus, mainSet, overrides){
+function drawWave(canvas, peaks, fallbackColor, segments, focus, mainSet, overrides, mm){
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth || 300, h = canvas.clientHeight || 60;
   canvas.width = w * dpr; canvas.height = h * dpr;
@@ -252,16 +252,11 @@ function drawWave(canvas, peaks, fallbackColor, segments, focus, mainSet, overri
   }
 
   const cols = Math.max(Math.floor(w), 1);
+  const mmN = (mm && mm.max && mm.min && mm.rms) ? mm.max.length : 0;
   let lastLabel = null;
   for (let px = 0; px < cols; px++){
     const sx = px / (cols - 1);
     const f = Math.max(0, Math.min(1, lens(sx)));
-    // linearly interpolate the envelope between peak samples so it reads as a
-    // smooth waveform instead of blocky steps (esp. on wide / hi-DPI canvases).
-    const fp = f * (peaks.length - 1);
-    const i0 = Math.floor(fp), i1 = Math.min(i0 + 1, peaks.length - 1);
-    const val = peaks[i0] + (peaks[i1] - peaks[i0]) * (fp - i0);
-    const amp = Math.max(val * mid, 1.0);
     let color = fallbackColor, label = null;
     if (segN){
       const segIdx = Math.min(Math.floor(f * segN), segN - 1);
@@ -282,9 +277,35 @@ function drawWave(canvas, peaks, fallbackColor, segments, focus, mainSet, overri
       ctx.fillRect(px, 0, 1, h);
     }
     lastLabel = label;
-    ctx.globalAlpha = focus == null ? 0.9 : 0.94;
-    ctx.fillStyle = color;
-    ctx.fillRect(px, mid - amp, 1.05, amp * 2);
+
+    if (mmN){
+      // DAW-style: pool min/max/rms over the source span this pixel covers (so
+      // transients spike), then draw a translucent peak outline + a solid RMS core.
+      const g1 = Math.max(0, Math.min(1, lens((px + 1) / (cols - 1))));
+      const a = Math.floor(Math.min(f, g1) * (mmN - 1));
+      const b = Math.max(a, Math.ceil(Math.max(f, g1) * (mmN - 1)));
+      let mn = 1, mx = -1, rm = 0;
+      for (let k = a; k <= b; k++){
+        if (mm.min[k] < mn) mn = mm.min[k];
+        if (mm.max[k] > mx) mx = mm.max[k];
+        if (mm.rms[k] > rm) rm = mm.rms[k];
+      }
+      if (mx < mn){ mn = 0; mx = 0; }
+      ctx.fillStyle = color;
+      ctx.globalAlpha = focus == null ? 0.5 : 0.55;                     // peak outline (min..max)
+      ctx.fillRect(px, mid - mx * mid, 1.05, Math.max((mx - mn) * mid, 1));
+      ctx.globalAlpha = focus == null ? 0.95 : 1;                       // RMS core (loudness body)
+      ctx.fillRect(px, mid - rm * mid, 1.05, Math.max(rm * 2 * mid, 1));
+    } else {
+      // fallback: the stored peak envelope, interpolated so it isn't blocky
+      const fp = f * (peaks.length - 1);
+      const i0 = Math.floor(fp), i1 = Math.min(i0 + 1, peaks.length - 1);
+      const val = peaks[i0] + (peaks[i1] - peaks[i0]) * (fp - i0);
+      const amp = Math.max(val * mid, 1.0);
+      ctx.globalAlpha = focus == null ? 0.9 : 0.94;
+      ctx.fillStyle = color;
+      ctx.fillRect(px, mid - amp, 1.05, amp * 2);
+    }
     if (ov){                                   // manual-override treatment: wash + top accent bar
       ctx.globalAlpha = 0.12; ctx.fillStyle = '#ffffff';
       ctx.fillRect(px, 0, 1.05, h);
@@ -393,6 +414,7 @@ function finishRow(row, data, file){
       fine: false,
       hop: 2.0,                           // seconds per frame (coarse default)
       smooth: 1.0,                        // medium default (~1s)
+      mm: null,                           // DAW-style min/max/rms (fetched below)
     };
     const container = document.createElement('div');
     container.className = 'wavecontainer';
@@ -466,10 +488,19 @@ function finishRow(row, data, file){
       waveState.mainSet = mainGenreSet(waveState.segments, waveState.fine);
     }
     function redraw(focus){
-      drawWave(c, waveState.peaks, pcol, waveState.segments, focus ?? null, waveState.mainSet, ovFracs());
+      drawWave(c, waveState.peaks, pcol, waveState.segments, focus ?? null, waveState.mainSet, ovFracs(), waveState.mm);
     }
     applySmoothing();
     requestAnimationFrame(() => redraw(null));
+
+    // upgrade to the DAW-style min/max/rms waveform: render the stored envelope
+    // instantly, then fetch the detailed one (pre-cached for new tracks, decoded
+    // once for older ones) and repaint. A 404 (no server audio) keeps the envelope.
+    if (data.hash){
+      fetch(`/waveform/${data.hash}`).then(r => r.ok ? r.json() : null).then(mm => {
+        if (mm && mm.max && mm.max.length){ waveState.mm = mm; redraw(null); }
+      }).catch(() => {});
+    }
 
     function showAt(clientX){
       const rect = c.getBoundingClientRect();

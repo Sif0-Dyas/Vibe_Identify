@@ -18,10 +18,12 @@ from .analysis import (
     build_payload,
     get_engine,
     get_maest,
+    load_samples_for_waveform,
     maest_genre,
     read_tags,
     read_title,
     refine_segments,
+    waveform_minmax,
 )
 from .config import AUDIO_EXTS, FAKE, log
 from .db import (
@@ -33,6 +35,8 @@ from .db import (
     file_hash,
     track_embedding,
     vibe_centroid,
+    waveform_cache_get,
+    waveform_cache_put,
 )
 
 bp = Blueprint("main", __name__)
@@ -94,11 +98,14 @@ def analyze_route():
             tags = read_tags(p)
             result = analyze(p)  # analyze() locks its own model inference
             emb = result.pop("emb_mean", None)
+            wave = result.pop("wave", None)  # DAW-style min/max/rms -> its own cache
             payload = build_payload(f.filename, None, title, tags, result)
             nc = insight.check(emb, *insight.dominant(payload)) if emb is not None else None
             if nc:
                 payload["neighbor_check"] = nc  # flag likely misreads
             cache_put(h, f.filename, None, title, payload, emb)
+            if wave is not None:
+                waveform_cache_put(h, wave)
             payload["hash"] = h
             payload["cached"] = False
             return jsonify(payload)
@@ -555,6 +562,32 @@ def audio_route(h):
     return send_file(
         str(p), mimetype=mime, conditional=True, as_attachment=False, download_name=row[1] or p.name
     )
+
+
+@bp.get("/waveform/<h>")
+def waveform_route(h):
+    """A DAW-style min/max/rms waveform for a track. Served from the permanent
+    cache (pre-filled at analysis time); for older tracks with no cache yet, decode
+    the source file once and cache it. A track with neither a cache nor a file
+    (e.g. an old browser-dropped one) 404s, and the client keeps its envelope."""
+    cached = waveform_cache_get(h)
+    if cached:
+        return jsonify(cached)
+    with _db_lock, closing(db()) as conn, conn as c:
+        row = c.execute("SELECT filepath FROM tracks WHERE hash=?", (h,)).fetchone()
+    if not row:
+        return jsonify({"error": "track not in database"}), 404
+    filepath = row[0]
+    if not filepath or not Path(filepath).is_file():
+        return jsonify({"error": "no server-side audio to render (re-add the track)"}), 404
+    try:
+        samples = load_samples_for_waveform(Path(filepath))  # decode stays outside the DB lock
+    except Exception:
+        log.exception("waveform decode failed for %s", h)
+        return jsonify({"error": "could not decode this track's audio"}), 500
+    data = waveform_minmax(samples)
+    waveform_cache_put(h, data)
+    return jsonify(data)
 
 
 # ----------------------------------------------------------------------------
@@ -1211,8 +1244,11 @@ def batch_route():
             tags = read_tags(path)
             result = analyze(path)
             emb = result.pop("emb_mean", None)
+            wave = result.pop("wave", None)
             payload = build_payload(path.name, str(path), title, tags, result)
             cache_put(h, path.name, str(path), title, payload, emb)
+            if wave is not None:
+                waveform_cache_put(h, wave)
             payload.update({"ok": True, "hash": h, "cached": False})
             return payload
         except Exception:

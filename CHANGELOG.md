@@ -220,6 +220,17 @@ _Work in progress lands here, then gets stamped with a version + date on release
   (cache-hit) is skipped from the list entirely instead of adding a redundant
   row. A brief "skipped N …" note shows in the footer.
 
+### Added
+- **DAW-style waveforms (min/max + RMS).** Tracks now render like audio software:
+  a translucent peak outline (min→max from a center line, so transients spike) with
+  a solid RMS "loudness" core, keeping the genre coloring. `GET /waveform/<hash>`
+  serves a high-res (1600-bin) min/max/rms envelope, cached permanently in a new
+  `waveform_cache` table — pre-filled at analysis time (free; the audio is already
+  decoded) for every new track, or decoded once on demand from the source file for
+  older tracks that have one. The row renders its stored envelope instantly, then
+  upgrades to the detailed waveform when it arrives; a track with no server audio
+  keeps the (interpolated) envelope. No re-analysis required to benefit.
+
 ### Fixed
 - **Sharper waveforms.** The amplitude envelope was drawn with nearest-neighbour
   sampling over 240 bins, so it looked blocky/pixelated on wide or hi-DPI canvases.

@@ -650,6 +650,81 @@ def test_lookup_cache_hit_never_queries(client, monkeypatch):
     assert body["errors"] == {}  # nothing was queried (else _boom would have errored)
 
 
+def test_waveform_minmax_shape_and_norm():
+    import numpy as np
+
+    from vibedentify.analysis import waveform_minmax
+
+    # a loud transient in an otherwise quiet signal -> normalized so peak hits 1.0
+    a = np.zeros(4000, dtype=np.float32)
+    a[2000:2010] = 0.5  # a spike at ~half-scale
+    a[:1000] = 0.05
+    mm = waveform_minmax(a, bins=100)
+    assert mm["bins"] == 100
+    assert len(mm["min"]) == len(mm["max"]) == len(mm["rms"]) == 100
+    assert max(mm["max"]) == 1.0  # normalized: loudest bin reaches full scale
+    assert all(-1.0 <= v <= 1.0 for v in mm["min"] + mm["max"])
+    assert all(0.0 <= v <= 1.0 for v in mm["rms"])
+    assert waveform_minmax([], bins=8) == {
+        "bins": 8,
+        "min": [0.0] * 8,
+        "max": [0.0] * 8,
+        "rms": [0.0] * 8,
+    }
+
+
+def test_waveform_route_precached_on_analyze(client):
+    # analyze pre-fills the waveform cache -> /waveform returns it, min/max/rms
+    h = client.post(
+        "/analyze",
+        data={"file": (io.BytesIO(_tiny_wav_bytes()), "wf.wav")},
+        content_type="multipart/form-data",
+    ).get_json()["hash"]
+    r = client.get(f"/waveform/{h}")
+    assert r.status_code == 200
+    body = r.get_json()
+    for k in ("bins", "min", "max", "rms"):
+        assert k in body
+    assert len(body["max"]) == body["bins"]
+
+
+def test_waveform_route_decodes_when_uncached(client, tmp_path):
+    from contextlib import closing
+
+    from vibedentify.db import _db_lock, db
+
+    h, _ = _batch_one(client, tmp_path, name="dec.wav", sample=4)
+    # drop the pre-filled cache so the route must decode the source WAV
+    with _db_lock, closing(db()) as conn, conn as c:
+        c.execute("DELETE FROM waveform_cache WHERE hash=?", (h,))
+    r = client.get(f"/waveform/{h}")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert len(body["max"]) == body["bins"] and len(body["min"]) == body["bins"]
+    # a second call is now served from the cache the decode just wrote
+    assert client.get(f"/waveform/{h}").status_code == 200
+
+
+def test_waveform_route_missing(client):
+    # unknown hash -> 404
+    assert client.get("/waveform/deadbeef").status_code == 404
+    # a dropped track with no file and no cache -> 404 (client keeps its envelope)
+    from contextlib import closing
+
+    from vibedentify.db import _db_lock, db
+
+    h = client.post(
+        "/analyze",
+        data={"file": (io.BytesIO(_tiny_wav_bytes()), "nf.wav")},
+        content_type="multipart/form-data",
+    ).get_json()["hash"]
+    with _db_lock, closing(db()) as conn, conn as c:
+        c.execute("DELETE FROM waveform_cache WHERE hash=?", (h,))
+    r = client.get(f"/waveform/{h}")
+    assert r.status_code == 404
+    assert "no server-side audio" in r.get_json()["error"]
+
+
 def test_misread_flag_logic():
     # the core rule: a shaky read whose close neighbours agree on a different
     # family gets flagged; a confident read does not.
