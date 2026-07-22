@@ -353,6 +353,17 @@ def override_route(h):
 # Records the span (repainted on the waveform, persisted across cache hits) and
 # extracts just that range into ~/genre_training/<genre>/ with ffmpeg.
 # ----------------------------------------------------------------------------
+def _backfill_filepath(h, path):
+    """Record a server-side path for a cached track that has none yet (drop-analyzed
+    rows stored an empty path). Only fills a blank -- never overwrites an existing
+    path. Enables audio preview, on-demand waveform, and section overrides."""
+    with _db_lock, closing(db()) as conn, conn as c:
+        c.execute(
+            "UPDATE tracks SET filepath=? WHERE hash=? AND (filepath IS NULL OR filepath='')",
+            (path, h),
+        )
+
+
 def _segment_overrides(h):
     """The persisted segment overrides for a track, oldest span first. Each carries
     its rowid as ``id`` so the client can target it for removal."""
@@ -1239,6 +1250,10 @@ def batch_route():
                 cached = dict(cached)
                 cached.update({"ok": True, "hash": h, "cached": True, "filepath": str(path)})
                 cached["segment_overrides"] = _segment_overrides(h)
+                # backfill a server-side path for older drop-analyzed rows (which
+                # stored none) so audio preview / DAW waveform / section overrides
+                # light up for the whole library on a re-scan -- no re-analysis.
+                _backfill_filepath(h, str(path))
                 return cached
             title = read_title(path) or path.stem
             tags = read_tags(path)

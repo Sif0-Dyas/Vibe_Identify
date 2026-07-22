@@ -230,6 +230,10 @@ _Work in progress lands here, then gets stamped with a version + date on release
   older tracks that have one. The row renders its stored envelope instantly, then
   upgrades to the detailed waveform when it arrives; a track with no server audio
   keeps the (interpolated) envelope. No re-analysis required to benefit.
+  **Batch re-scan now backfills a server-side path** for older drop-analyzed rows
+  that stored none (cache hit, no re-analysis), so pointing *batch folder* at your
+  music lights up the DAW waveform — plus audio preview and section overrides — for
+  a whole library that was originally drag-dropped.
 
 ### Fixed
 - **Sharper waveforms.** The amplitude envelope was drawn with nearest-neighbour

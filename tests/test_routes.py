@@ -705,6 +705,39 @@ def test_waveform_route_decodes_when_uncached(client, tmp_path):
     assert client.get(f"/waveform/{h}").status_code == 200
 
 
+def test_batch_backfills_dropped_track_filepath(client, tmp_path):
+    # a drop-analyzed track stores no server path; re-scanning the folder it lives
+    # in backfills the path (cache hit, no re-analysis) -> /waveform now decodes it.
+    music = tmp_path / "lib"
+    music.mkdir()
+    (music / "bf.wav").write_bytes(_tiny_wav_bytes(sample=6))
+    # 1) analyze it as an upload (dropped): filepath ends up empty
+    with open(music / "bf.wav", "rb") as fh:
+        h = client.post(
+            "/analyze",
+            data={"file": (io.BytesIO(fh.read()), "bf.wav")},
+            content_type="multipart/form-data",
+        ).get_json()["hash"]
+    from contextlib import closing
+
+    from vibedentify.db import _db_lock, db
+
+    with _db_lock, closing(db()) as conn, conn as c:
+        assert (
+            c.execute("SELECT filepath FROM tracks WHERE hash=?", (h,)).fetchone()[0] or ""
+        ) == ""
+        c.execute("DELETE FROM waveform_cache WHERE hash=?", (h,))  # simulate a pre-feature track
+
+    # 2) batch-scan the folder -> cache hit backfills the path (consume the
+    #    streamed NDJSON so the generator actually runs)
+    client.post("/batch", json={"path": str(music)}).get_data()
+    with _db_lock, closing(db()) as conn, conn as c:
+        fp = c.execute("SELECT filepath FROM tracks WHERE hash=?", (h,)).fetchone()[0]
+    assert fp and fp.endswith("bf.wav")
+    # 3) the waveform now decodes from the backfilled path
+    assert client.get(f"/waveform/{h}").status_code == 200
+
+
 def test_waveform_route_missing(client):
     # unknown hash -> 404
     assert client.get("/waveform/deadbeef").status_code == 404
