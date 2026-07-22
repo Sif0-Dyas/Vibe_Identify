@@ -1103,7 +1103,7 @@ def _second_style(payload, top_style, top_score):
     return None
 
 
-def _map_node(h, title, filename, payload):
+def _map_node(h, title, filename, payload, filepath=""):
     p = payload if isinstance(payload, dict) else json.loads(payload)
     style, score = _dominant_style(p)
     return {
@@ -1119,6 +1119,7 @@ def _map_node(h, title, filename, payload):
         "scale": p.get("scale"),
         "camelot": p.get("camelot"),
         "duration": p.get("duration"),
+        "a": 1 if (filepath and str(filepath).strip()) else 0,  # has a server-side file -> playable
     }
 
 
@@ -1135,10 +1136,12 @@ def map_route():
     import numpy as np
 
     with _db_lock, closing(db()) as conn, conn as c:
-        rows = c.execute("SELECT hash, title, filename, payload, embedding FROM tracks").fetchall()
+        rows = c.execute(
+            "SELECT hash, title, filename, filepath, payload, embedding FROM tracks"
+        ).fetchall()
     nodes, embs, emb_idx = [], [], []
-    for h, title, filename, payload, blob in rows:
-        nodes.append(_map_node(h, title, filename, payload))
+    for h, title, filename, filepath, payload, blob in rows:
+        nodes.append(_map_node(h, title, filename, payload, filepath))
         if blob is not None:
             embs.append(np.frombuffer(blob, dtype=np.float32))
             emb_idx.append(len(nodes) - 1)

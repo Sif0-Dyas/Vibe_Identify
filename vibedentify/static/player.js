@@ -78,6 +78,13 @@ function attachPlayer(row, container, controls, c, file, data, dur){
         if (PLAYER.ctl) PLAYER.ctl.stopVisual();
         PLAYER.ctl = ctl;
         PLAYER.audio.src = src;
+        // surface this track in the Now Playing bar (nowbar.js observes PLAYER.now)
+        PLAYER.now = {
+          hash: data && data.hash,
+          title: (data && data.title) || (file && file.name) || 'Track',
+          artist: (data && data.tags && data.tags.tag && data.tags.tag.artist) || '',
+          dur,
+        };
       }
       if (seekFrac != null){
         const f = Math.max(0, Math.min(1, seekFrac));

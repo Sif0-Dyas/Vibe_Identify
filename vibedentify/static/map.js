@@ -949,6 +949,9 @@
       <div class="pop-title">${escapeHtml(n.artist ? stripArtist(n.title, n.artist) : n.title)}</div>
       ${n.artist ? `<div class="pop-artist">${escapeHtml(n.artist)}</div>` : ''}
       <div class="pop-meta">${meta}</div>
+      <div class="pop-actions">${n.a
+        ? `<button class="pop-play">▶ play</button>`
+        : `<button class="pop-play" disabled title="no file on disk — re-scan this folder (batch) to enable playback">▶ no file</button>`}</div>
       ${n.flag ? `<div class="pop-flag">⚠ low-confidence read — its closest neighbours sound like
         <b>${escapeHtml(n.suggest || '?')}</b></div>` : ''}
       <div id="pop-pick"><div class="pop-bar" style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--dim)">finding a match…</div></div>
@@ -969,6 +972,11 @@
       </div>`;
     popEl.hidden = false;
     popEl.querySelector('.pop-x').onclick = closePopup;
+    const playBtn = popEl.querySelector('.pop-play');
+    if (playBtn && n.a) playBtn.onclick = () => window.playHash && window.playHash(n.hash, {
+      title: n.artist ? stripArtist(n.title, n.artist) : n.title,
+      artist: n.artist || '', color: famCss(n.fam),
+    });
     popEl.querySelector('.pop-omit').onclick = () => omitTrack(n);
     const ovrRow = popEl.querySelector('.pop-ovr'), omitRow = popEl.querySelector('.pop-omit-row');
     const ovrIn = popEl.querySelector('.pop-ovr-in');
@@ -1056,10 +1064,21 @@
       return `<div class="sim-row" data-h="${s.hash}">
         <span class="dot" style="background:${famCss(fam)}"></span>
         <span class="nm" title="${escapeHtml(s.title)}">${escapeHtml(nm)}</span>
+        <button class="sim-play" data-h="${s.hash}" title="play">▶</button>
         <span class="pct">${(s.sim*100).toFixed(0)}%</span></div>`;
     }).join('');
     simEl.querySelectorAll('.sim-row').forEach(row =>
       row.onclick = () => { const h=row.getAttribute('data-h'); if (byHash.has(h)) selectNode(h); });
+    simEl.querySelectorAll('.sim-play').forEach(btn =>
+      btn.onclick = ev => {
+        ev.stopPropagation();
+        const h = btn.getAttribute('data-h');
+        const s = sim.find(x => x.hash === h);
+        if (s && window.playHash) window.playHash(h, {
+          title: s.artist ? stripArtist(s.title, s.artist) : s.title,
+          artist: s.artist || '', color: famCss(familyOf(s.style || '') || 'Other'),
+        });
+      });
     const seen=new Set(), artists=[];
     for (const s of sim){ const a=(s.artist||'').trim();
       if (a && !seen.has(a.toLowerCase())){ seen.add(a.toLowerCase()); artists.push(a); }
