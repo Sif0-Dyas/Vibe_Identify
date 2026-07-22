@@ -73,9 +73,7 @@ def _promote_token_cookie(resp):
     # Turn a valid ?k= (the first navigation) into an httponly, same-site cookie
     # so later requests authenticate on their own, without the token in the URL.
     if _AUTH_TOKEN and hmac.compare_digest(request.args.get("k", ""), _AUTH_TOKEN):
-        resp.set_cookie(
-            _TOKEN_COOKIE, _AUTH_TOKEN, httponly=True, samesite="Strict", path="/"
-        )
+        resp.set_cookie(_TOKEN_COOKIE, _AUTH_TOKEN, httponly=True, samesite="Strict", path="/")
     return resp
 
 
