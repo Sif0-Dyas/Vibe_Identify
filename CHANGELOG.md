@@ -159,6 +159,17 @@ _Work in progress lands here, then gets stamped with a version + date on release
   `.gitignore` gains `_cache/`, `manifest.json`, `*.npz` as insurance.
 
 ### Changed
+- **Split `routes.py` into a domain `routes/` package.** The 1,289-line single-module
+  Blueprint became `vibedentify/routes/`: `_shared` (the Blueprint, optional loopback
+  auth, cross-domain helpers), `analysis` (analyze/refine/compare/batch + audio/waveform),
+  `library` (vibes/tags/lookup/forget/overrides/similar), `training`
+  (save/candidates/confirm/reject), and `map` (map/audit/index/guide). Still one
+  Blueprint, imported across the modules; the app factory's `from .routes import bp`
+  is unchanged and remains the only registration point, and `_artist_of` /
+  `_second_style` are re-exported so the tests import them unmodified. Routes moved
+  verbatim; the sole logic change is one `__file__`-relative path in the guide route,
+  re-anchored for its new package depth. Route count identical before/after (32), all
+  57 tests pass unchanged.
 - **Decomposed `analyze()` (`analysis.py`).** The 150-line function is now a short
   orchestrator over three verbatim-extracted helpers: `_decode_and_infer` (both
   decodes + the `_lock`-scoped model inference, lock boundary unchanged),
