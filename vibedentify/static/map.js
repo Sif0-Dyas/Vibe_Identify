@@ -951,7 +951,8 @@
       <div class="pop-meta">${meta}</div>
       <div class="pop-actions">${n.a
         ? `<button class="pop-play">▶ play</button>`
-        : `<button class="pop-play" disabled title="no file on disk — re-scan this folder (batch) to enable playback">▶ no file</button>`}</div>
+        : `<button class="pop-play" disabled title="no file on disk — re-scan this folder (batch) to enable playback">▶ no file</button>`}
+        <button class="pop-add">${(window.playlistHas && window.playlistHas(n.hash)) ? '✓ in playlist' : '＋ playlist'}</button></div>
       ${n.flag ? `<div class="pop-flag">⚠ low-confidence read — its closest neighbours sound like
         <b>${escapeHtml(n.suggest || '?')}</b></div>` : ''}
       <div id="pop-pick"><div class="pop-bar" style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--dim)">finding a match…</div></div>
@@ -977,6 +978,14 @@
       title: n.artist ? stripArtist(n.title, n.artist) : n.title,
       artist: n.artist || '', color: famCss(n.fam),
     });
+    const addBtn = popEl.querySelector('.pop-add');
+    if (addBtn) addBtn.onclick = () => {
+      if (window.playlistAdd) window.playlistAdd({
+        hash: n.hash, title: n.artist ? stripArtist(n.title, n.artist) : n.title,
+        artist: n.artist || '', color: famCss(n.fam), a: n.a,
+      });
+      addBtn.textContent = '✓ in playlist'; addBtn.classList.add('added');
+    };
     popEl.querySelector('.pop-omit').onclick = () => omitTrack(n);
     const ovrRow = popEl.querySelector('.pop-ovr'), omitRow = popEl.querySelector('.pop-omit-row');
     const ovrIn = popEl.querySelector('.pop-ovr-in');
@@ -1065,6 +1074,7 @@
         <span class="dot" style="background:${famCss(fam)}"></span>
         <span class="nm" title="${escapeHtml(s.title)}">${escapeHtml(nm)}</span>
         <button class="sim-play" data-h="${s.hash}" title="play">▶</button>
+        <button class="sim-add" data-h="${s.hash}" title="add to playlist">＋</button>
         <span class="pct">${(s.sim*100).toFixed(0)}%</span></div>`;
     }).join('');
     simEl.querySelectorAll('.sim-row').forEach(row =>
@@ -1078,6 +1088,19 @@
           title: s.artist ? stripArtist(s.title, s.artist) : s.title,
           artist: s.artist || '', color: famCss(familyOf(s.style || '') || 'Other'),
         });
+      });
+    simEl.querySelectorAll('.sim-add').forEach(btn =>
+      btn.onclick = ev => {
+        ev.stopPropagation();
+        const h = btn.getAttribute('data-h');
+        const s = sim.find(x => x.hash === h);
+        if (s && window.playlistAdd) {
+          window.playlistAdd({
+            hash: h, title: s.artist ? stripArtist(s.title, s.artist) : s.title,
+            artist: s.artist || '', color: famCss(familyOf(s.style || '') || 'Other'), a: s.a,
+          });
+          btn.textContent = '✓';
+        }
       });
     const seen=new Set(), artists=[];
     for (const s of sim){ const a=(s.artist||'').trim();

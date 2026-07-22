@@ -1222,12 +1222,12 @@ def similar_route(h):
         return jsonify({"error": "track not in database"}), 404
     with _db_lock, closing(db()) as conn, conn as c:
         rows = c.execute(
-            "SELECT hash, title, filename, payload, embedding FROM tracks "
+            "SELECT hash, title, filename, filepath, payload, embedding FROM tracks "
             "WHERE embedding IS NOT NULL AND hash != ?",
             (h,),
         ).fetchall()
     out = []
-    for hh, title, filename, payload, blob in rows:
+    for hh, title, filename, filepath, payload, blob in rows:
         emb = np.frombuffer(blob, dtype=np.float32)
         p = json.loads(payload)
         style, _ = _dominant_style(p)
@@ -1240,6 +1240,7 @@ def similar_route(h):
                 "bpm": p.get("bpm"),
                 "camelot": p.get("camelot"),
                 "sim": round(cosine(target, emb), 4),
+                "a": 1 if (filepath and str(filepath).strip()) else 0,
             }
         )
     out.sort(key=lambda x: -x["sim"])
