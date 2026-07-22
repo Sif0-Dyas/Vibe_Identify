@@ -1184,3 +1184,142 @@ body.view-guide .lensbar{ display:none; }
   color:#ffcf8a; font-family:'JetBrains Mono',monospace; font-size:10.5px; line-height:1.5;
 }
 .pop-flag b{ color:#ffb03b; }
+
+/* ============================================================================
+   NEON DJ SKIN — cyan-electric, waveform-forward, on near-black.
+   Retires the Winamp homage (bevels / LCD-green / gold Silkscreen). This layer
+   is appended last, so it wins by source order at equal specificity — no
+   !important, and deleting this whole block restores the previous look.
+   ============================================================================ */
+:root{
+  --bg:#06080D;                     /* near-black, faint cool tint            */
+  --panel:#0C1016; --panel-2:#12171F; --line:#1E2632;
+  --text:#EAF2F8; --dim:#7C8998; --dimmer:#3A4557;
+  --accent-a:#22D3EE;               /* electric cyan — primary accent         */
+  --accent-b:#7C5CFF;               /* electric violet — gradient partner     */
+  --grad:linear-gradient(90deg,#22D3EE,#7C5CFF);
+  --glow:0 0 20px rgba(34,211,238,.45);
+  --glow-sm:0 0 10px rgba(34,211,238,.35);
+  --lcd:#5DE9FF;                    /* cyan readout text (BPM/key/time)        */
+  --lcd-bg:#03141B;                 /* dark cyan-tinted readout well           */
+  --gold:#FFC46B;                   /* warm amber — kept for "match"/compare   */
+  --bev-lt:#1E2632; --bev-dk:#05070B;
+}
+body{ font-family:'DM Sans',system-ui,sans-serif; }
+
+/* --- chassis: flat panels, single hairline borders (de-bevel) --- */
+header{ border:0; border-bottom:1px solid var(--line); background:var(--panel); }
+footer, .actionbar{ border:0; border-top:1px solid var(--line); background:var(--panel); }
+#sib-panel, #vibe-panel, #flag-panel, #label-panel{
+  border-left:1px solid var(--line); background:var(--panel);
+  box-shadow:-22px 0 55px rgba(0,0,0,.55);
+}
+.sib-hd{ background:var(--panel); }
+.sib-hd h2{ font-family:'Syne',sans-serif; font-size:15px; color:var(--text); text-shadow:none; }
+
+/* --- wordmark: gradient + cyan glow (was gold Silkscreen) --- */
+header h1{
+  font-family:'Syne',sans-serif; font-weight:800; letter-spacing:-.01em;
+  font-size:clamp(16px,2.2vw,19px); color:var(--text); text-shadow:none;
+}
+header h1 em{
+  background:var(--grad); -webkit-background-clip:text; background-clip:text;
+  -webkit-text-fill-color:transparent; color:transparent;
+  filter:drop-shadow(0 0 10px rgba(34,211,238,.5));
+}
+header .sub{ color:var(--dim); text-shadow:none; }
+/* signature spectrum, recoloured cyan and dialled back */
+.eq-bars{ opacity:.14; }
+.eq-bars span{ background:var(--grad); border-radius:2px 2px 0 0; }
+
+/* --- tabs: active gets a cyan glow --- */
+.tab.active{ color:var(--text); border-color:var(--accent-a);
+  background:rgba(34,211,238,.08); box-shadow:var(--glow-sm); }
+
+/* --- list rows: roomier, cyan hover rail --- */
+.row{ transition:background .12s, box-shadow .12s; }
+.row:hover{ background:rgba(34,211,238,.035); box-shadow:inset 2px 0 0 var(--accent-a); }
+.row .title{ color:var(--text); text-shadow:none; }
+.listhead span{ font-family:'JetBrains Mono',monospace; font-size:10px;
+  color:var(--dim); letter-spacing:.12em; }
+
+/* --- BPM / key: cyan LCD readout (kept as a DJ-gear motif, de-bevelled) --- */
+.row > div:nth-child(2){
+  background:var(--lcd-bg); border:1px solid rgba(34,211,238,.20);
+  border-radius:8px; padding:7px 9px;
+}
+.musical .bpm{ font-family:'JetBrains Mono',monospace; color:var(--lcd);
+  text-shadow:0 0 8px rgba(34,211,238,.5); font-weight:600; }
+.musical .unit, .musical .keyrow, .musical .dur, .musical .altbpm{ color:#5E8695; }
+.musical .camelot{ background:rgba(34,211,238,.08); color:var(--lcd);
+  border:1px solid rgba(34,211,238,.30); text-shadow:0 0 6px rgba(34,211,238,.4); }
+.musical .warn{ color:var(--gold); }
+
+/* --- waveform well: cyan-tinted, rounded --- */
+.row canvas{ background:var(--lcd-bg); border:1px solid rgba(34,211,238,.16); border-radius:8px; }
+.playhead{ background:var(--accent-a); box-shadow:0 0 8px rgba(34,211,238,.85); }
+.playbtn{
+  font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--accent-a);
+  background:rgba(34,211,238,.08); border:1px solid rgba(34,211,238,.30);
+  border-radius:6px; padding:2px 10px; cursor:pointer; text-shadow:none; transition:.15s;
+}
+.playbtn:hover:not(:disabled){ border-color:var(--accent-a); box-shadow:var(--glow-sm); }
+.playbtn.playing{ background:var(--accent-a); color:#03141B;
+  border-color:var(--accent-a); box-shadow:var(--glow-sm); }
+.playbtn:disabled{ opacity:.55; color:var(--dim); background:none; border-color:var(--line); }
+.playtime{ color:var(--dim); }
+
+/* --- buttons: flat pills with a cyan hover glow (was bevel + Silkscreen) --- */
+#export, #clear, #batch-btn, #vibe-btn, .sib-btn, .browse,
+.override-btn, .addvibe-btn, .tagchip, .ovr-save, .ovr-cancel,
+.vibe-row button, .vibe-create button, .sib-add, .sib-close{
+  border:1px solid var(--line);
+  border-top-color:var(--line); border-left-color:var(--line);
+  border-bottom-color:var(--line); border-right-color:var(--line);
+  border-radius:8px; background:var(--panel-2);
+  font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:500;
+  letter-spacing:.01em; text-transform:none;
+  transition:border-color .15s, box-shadow .15s, color .15s, transform .05s;
+}
+#batch-btn:hover, #vibe-btn:hover, .browse:hover, .sib-btn:hover, .sib-add:hover,
+#clear:hover, .override-btn:hover, .addvibe-btn:hover{
+  border-color:var(--accent-a); color:var(--text); box-shadow:var(--glow-sm);
+}
+#export, #clear, #batch-btn, #vibe-btn, .sib-btn, .browse, .sib-add{ padding:6px 14px; }
+#export:active, #clear:active, #batch-btn:active, #vibe-btn:active,
+.sib-btn:active, .browse:active{ transform:translateY(1px); }
+#export{ background:var(--grad); color:#03141B; font-weight:700; text-shadow:none;
+  box-shadow:var(--glow-sm); border:0; }
+#export:hover:not(:disabled){ box-shadow:var(--glow); }
+#export:disabled{ background:var(--panel-2); color:var(--dimmer); box-shadow:none; }
+
+/* --- dropzone: flat, cyan drag state (was inset bevel) --- */
+#drop{ border:0; border-radius:0; background:var(--panel-2); }
+#drop.over{ background:rgba(34,211,238,.05); }
+#drop.over::after{ font-family:'Syne',sans-serif; color:var(--accent-a);
+  background:rgba(3,20,27,.55); border:2px dashed var(--accent-a); }
+#drop .big{ font-family:'Syne',sans-serif; color:var(--text); text-shadow:none; }
+
+/* --- chips: flat --- */
+.chip{ border:1px solid var(--line);
+  border-top-color:var(--line); border-left-color:var(--line);
+  border-bottom-color:var(--line); border-right-color:var(--line); border-radius:8px; }
+.tagchip.on{ background:rgba(34,211,238,.10); color:var(--lcd);
+  text-shadow:0 0 5px rgba(34,211,238,.4); border-color:rgba(34,211,238,.35); }
+.tagchip.newtag{ color:var(--gold); border-color:var(--dimmer); }
+.tagchip.newtag:hover{ border-color:var(--gold); }
+
+/* --- slim modern scrollbar (was chunky retro) --- */
+#rows::-webkit-scrollbar{ width:10px; }
+#rows::-webkit-scrollbar-track{ background:transparent; }
+#rows::-webkit-scrollbar-thumb{ background:var(--line); border:2px solid var(--panel-2);
+  border-radius:6px; }
+#rows::-webkit-scrollbar-thumb:hover{ background:var(--dimmer); }
+#count{ color:var(--dim); text-shadow:none; }
+
+/* --- remaining Silkscreen holdouts in the base layer --- */
+.lk-srchd{ font-family:'JetBrains Mono',monospace; color:var(--gold); }
+
+/* --- map "pull up a match" gradient -> cyan/violet --- */
+.pop-pick{ background:linear-gradient(135deg, rgba(124,92,255,.16), rgba(34,211,238,.12)); }
+

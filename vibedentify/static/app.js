@@ -1182,7 +1182,7 @@ clearB.addEventListener('click', () => {
 (function(){
   const el = document.getElementById('eq-bars');
   if (!el) return;
-  const COLORS = ['#E69F00','#56B4E9','#CC79A7','#009E73','#9B6FD4','#D55E00','#0072B2'];
+  const COLORS = ['#22D3EE','#5DE9FF','#38BDF8','#7C5CFF','#67E8F9','#818CF8','#22D3EE'];
   for (let i = 0; i < 48; i++){
     const s = document.createElement('span');
     const lo = Math.round(8 + Math.random()*20);
