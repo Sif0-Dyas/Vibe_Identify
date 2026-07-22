@@ -1,0 +1,4 @@
+# Windows desktop shell dependency (install into your *Windows* Python, not WSL).
+#   py -m pip install -r requirements-desktop.txt
+# Needs the Edge WebView2 runtime, which ships with Windows 11 by default.
+pywebview>=5.0
