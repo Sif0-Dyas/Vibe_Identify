@@ -34,10 +34,13 @@ import urllib.request
 PORT = int(os.environ.get("GENRE_PORT", "5005"))
 BASE_URL = f"http://127.0.0.1:{PORT}"
 
-# Windows-side location of the project (used only to derive the WSL path below,
-# so there is a single source of truth for "where the app lives").
+# Windows-side location of the project = the folder that contains this desktop/
+# dir. Deriving it from the script's own location (not a hardcoded path) means the
+# shell boots whatever copy of the app it ships with — the original checkout, or a
+# branch/worktree — so a "Windows version" branch is truly self-contained.
 WIN_PROJECT = os.environ.get(
-    "GENRE_WIN_PROJECT", r"C:\Users\mrand\Documents\CODING\Genre Identifier"
+    "GENRE_WIN_PROJECT",
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 )
 
 # The venv Python inside WSL that has Essentia installed (see project memory).
@@ -328,11 +331,9 @@ def _selftest() -> int:
     check("empty -> None", win_to_wsl(""), None)
 
     print("derived WSL project path:")
-    check(
-        "WSL_PROJECT",
-        WSL_PROJECT,
-        "/mnt/c/Users/mrand/Documents/CODING/Genre Identifier",
-    )
+    print(f"  WIN_PROJECT = {WIN_PROJECT!r}")
+    check("WSL_PROJECT == win_to_wsl(WIN_PROJECT)", WSL_PROJECT, win_to_wsl(WIN_PROJECT))
+    check("WSL_PROJECT under /mnt/", WSL_PROJECT.startswith("/mnt/"), True)
 
     print("wsl launch command:")
     cmd = _wsl_cmd()

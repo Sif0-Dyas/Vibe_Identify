@@ -45,14 +45,15 @@ overridable by an environment variable:
 
 | Constant | Env var | Default |
 | --- | --- | --- |
-| `WIN_PROJECT` | `GENRE_WIN_PROJECT` | `C:\Users\mrand\Documents\CODING\Genre Identifier` |
+| `WIN_PROJECT` | `GENRE_WIN_PROJECT` | *auto-detected: the folder containing `desktop/`* |
 | `WSL_PYTHON` | `GENRE_WSL_PYTHON` | `/home/euphy/genre/bin/python` |
 | `WSL_DISTRO` | `GENRE_WSL_DISTRO` | *(default distro)* |
 | `PORT` | `GENRE_PORT` | `5005` |
 | `FAKE` | `GENRE_DESKTOP_FAKE=1` | off (real Essentia) |
 
-`WSL_PROJECT` (the `/mnt/c/...` path) is derived from `WIN_PROJECT`, so there's
-one source of truth.
+`WSL_PROJECT` (the `/mnt/c/...` path) is derived from `WIN_PROJECT`, which in turn
+defaults to this script's own project folder — so the shell boots whichever copy
+of the app it ships with (this branch/worktree, or the original checkout).
 
 Set `GENRE_DESKTOP_FAKE=1` to boot the backend in fake-analyzer mode (instant
 results, no model load) — handy for trying the window itself.
