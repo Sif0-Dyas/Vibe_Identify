@@ -159,6 +159,15 @@ _Work in progress lands here, then gets stamped with a version + date on release
   `.gitignore` gains `_cache/`, `manifest.json`, `*.npz` as insurance.
 
 ### Changed
+- **Versioned DB schema (`db.py`).** Replaced the grown-past-useful
+  create-and-patch block with a `schema_version` table and an ordered, append-only
+  `MIGRATIONS` list. `init_db()` applies every migration above the DB's recorded
+  version inside its transaction, then records the new version; migration 1 is the
+  full pre-existing schema (moved verbatim, weight-column patch folded in), so a
+  fresh DB and an existing populated one both converge to the identical schema at
+  version 1 with zero data loss. Future schema changes are new numbered entries.
+  Refactor only — no route/query behavior changed. (Tested: fresh vs. hand-built
+  legacy DB converge; migrations are idempotent.)
 - **Desktop shell: theme, quality gates, and honest config docs.** The `desktop/`
   launcher's inline splash + error pages are reskinned from the old generic dark
   look to the app's current **Neon-DJ** palette (near-black chassis, cyan LCD-well
