@@ -159,6 +159,45 @@ _Work in progress lands here, then gets stamped with a version + date on release
   `.gitignore` gains `_cache/`, `manifest.json`, `*.npz` as insurance.
 
 ### Changed
+- **Split `static/app.js` at the rows-vs-panels seam.** The panel subsystems —
+  sibling-group editor, per-row tags, external-lookup results, the vibes panel, and
+  the label-propagation queue — moved to `static/panels.js`, leaving row rendering,
+  lenses, waveform, batch, compare, and the shared helpers in `app.js` (2,075 → 1,469
+  lines). Same plain-`<script>` pattern as the map/player split (`panels.js` loads
+  after `app.js` + `player.js`); the cross-file surface is declared in
+  `eslint.config.js` — app.js's `finishRow` → `renderTags`/`renderLookup`/
+  `renderVibeMatches`, and panels.js → `results`/`GLOBAL`/`SIBLING_MAP`/
+  `SIBLING_GROUPS`/`styleInfo`. Functions moved verbatim; `eslint` + `node --check`
+  clean.
+- **Split `routes.py` into a domain `routes/` package.** The 1,289-line single-module
+  Blueprint became `vibedentify/routes/`: `_shared` (the Blueprint, optional loopback
+  auth, cross-domain helpers), `analysis` (analyze/refine/compare/batch + audio/waveform),
+  `library` (vibes/tags/lookup/forget/overrides/similar), `training`
+  (save/candidates/confirm/reject), and `map` (map/audit/index/guide). Still one
+  Blueprint, imported across the modules; the app factory's `from .routes import bp`
+  is unchanged and remains the only registration point, and `_artist_of` /
+  `_second_style` are re-exported so the tests import them unmodified. Routes moved
+  verbatim; the sole logic change is one `__file__`-relative path in the guide route,
+  re-anchored for its new package depth. Route count identical before/after (32), all
+  57 tests pass unchanged.
+- **Decomposed `analyze()` (`analysis.py`).** The 150-line function is now a short
+  orchestrator over three verbatim-extracted helpers: `_decode_and_infer` (both
+  decodes + the `_lock`-scoped model inference, lock boundary unchanged),
+  `_musical_features` (BPM/key/Camelot/duration/waveform), and `_assemble` (styles,
+  segments, salience, frames, custom, mean embedding → the payload dict). No
+  operation reordered in a way that changes behavior, no lock boundary moved, and
+  the returned dict is unchanged key-for-key; the FAKE branch is untouched. Adds
+  synthetic-input unit tests for `_musical_features` and `_assemble`, lifting
+  `analysis.py` coverage (overall suite 67% → 73%).
+- **Versioned DB schema (`db.py`).** Replaced the grown-past-useful
+  create-and-patch block with a `schema_version` table and an ordered, append-only
+  `MIGRATIONS` list. `init_db()` applies every migration above the DB's recorded
+  version inside its transaction, then records the new version; migration 1 is the
+  full pre-existing schema (moved verbatim, weight-column patch folded in), so a
+  fresh DB and an existing populated one both converge to the identical schema at
+  version 1 with zero data loss. Future schema changes are new numbered entries.
+  Refactor only — no route/query behavior changed. (Tested: fresh vs. hand-built
+  legacy DB converge; migrations are idempotent.)
 - **Desktop shell: theme, quality gates, and honest config docs.** The `desktop/`
   launcher's inline splash + error pages are reskinned from the old generic dark
   look to the app's current **Neon-DJ** palette (near-black chassis, cyan LCD-well

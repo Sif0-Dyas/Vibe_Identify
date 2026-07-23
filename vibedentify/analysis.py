@@ -387,6 +387,111 @@ def salience_read(preds, audio16, labels, topk=8):
     return [{"style": g, "score": v / total} for g, v in ranked]
 
 
+def _decode_and_infer(path: Path):
+    """Decode the file and run the (locked) genre inference.
+
+    Returns ``(audio16, audio44, embeddings, preds)``. Only the shared,
+    non-thread-safe embedder+classifier pass is serialized under ``_lock`` (exactly
+    as before); both decodes stay outside it so they parallelize across workers."""
+    from essentia.standard import MonoLoader
+
+    eng = get_engine()
+
+    # --- genre (model wants 16 kHz) ---
+    audio16 = MonoLoader(filename=str(path), sampleRate=16000, resampleQuality=4)()
+    # embedder + classifier are shared, non-thread-safe TF instances -> serialize
+    # this one inference pass; decode/BPM/key below stay parallel across workers.
+    with _lock:
+        embeddings = eng["embedder"](audio16)
+        preds = eng["classifier"](embeddings)
+
+    # --- musical details (44.1 kHz for accuracy) ---
+    audio44 = MonoLoader(filename=str(path), sampleRate=44100, resampleQuality=4)()
+    return audio16, audio44, embeddings, preds
+
+
+def _musical_features(audio44) -> dict:
+    """BPM, key/scale/Camelot, duration, and waveform envelopes from the 44.1 kHz
+    signal. BPM and key are best-effort (None on failure)."""
+    from essentia.standard import KeyExtractor, RhythmExtractor2013
+
+    duration = float(len(audio44)) / 44100.0
+
+    bpm = bpm_conf = None
+    try:
+        bpm, _, conf, _, _ = RhythmExtractor2013(method="multifeature")(audio44)
+        bpm, bpm_conf = float(bpm), float(conf)
+    except Exception:  # nosec B110  # BPM extraction is best-effort; None on failure is fine
+        pass
+
+    key = scale = camelot = None
+    key_strength = None
+    try:
+        k, s, strength = KeyExtractor()(audio44)
+        key, scale, key_strength = str(k), str(s), float(strength)
+        camelot = CAMELOT.get((key, scale))
+    except Exception:  # nosec B110  # key extraction is best-effort; None on failure is fine
+        pass
+
+    return {
+        "bpm": round(bpm, 1) if bpm else None,
+        "bpm_confidence": bpm_conf,
+        "key": key,
+        "scale": scale,
+        "camelot": camelot,
+        "key_strength": key_strength,
+        "duration": duration,
+        "waveform": waveform_peaks(audio44),
+        "wave": waveform_minmax(audio44),  # DAW-style; cached, not stored in payload
+    }
+
+
+def _assemble(labels, audio16, embeddings, preds, features) -> dict:
+    """Build the analysis payload from raw predictions + embeddings: ranked styles,
+    per-frame segments, the salience read, top-k frames, custom-head scores, and the
+    mean embedding, spliced with the musical ``features`` dict. Takes ``labels``
+    explicitly (no ``get_engine()``) so it runs on synthetic inputs without models."""
+    import numpy as np
+
+    mean = np.mean(preds, axis=0)
+    order = np.argsort(mean)[::-1]
+    styles = []
+    for i in order[:8]:
+        parent, child = labels[i].split("---", 1)
+        styles.append({"parent": parent, "style": child, "score": float(mean[i])})
+
+    # per-frame winner -> which genre dominates each ~2s patch of the track
+    frame_winners = np.argmax(preds, axis=1)
+    segments = [labels[int(i)].split("---", 1)[1] for i in frame_winners]
+
+    # salience-weighted overall identity (energy x confidence x recurrence)
+    salience = salience_read(preds, audio16, labels)
+
+    # per-frame top-k predictions (for hysteresis / sibling-merge lenses)
+    frames = frame_topk(preds, labels)
+
+    # custom head (if trained) scores the SAME embeddings -- no extra audio work
+    custom = custom_predict(embeddings)
+
+    return {
+        "styles": styles,
+        "segments": segments,
+        "salience": salience,
+        "frames": frames,
+        "custom": custom,
+        "bpm": features["bpm"],
+        "bpm_confidence": features["bpm_confidence"],
+        "key": features["key"],
+        "scale": features["scale"],
+        "camelot": features["camelot"],
+        "key_strength": features["key_strength"],
+        "duration": features["duration"],
+        "waveform": features["waveform"],
+        "wave": features["wave"],  # DAW-style; cached, not stored in payload
+        "emb_mean": [float(x) for x in np.mean(embeddings, axis=0)],
+    }
+
+
 def analyze(path: Path) -> dict:
     """Genre styles + BPM, key, duration, and a waveform envelope for one file."""
     if FAKE:
@@ -468,76 +573,13 @@ def analyze(path: Path) -> dict:
             "emb_mean": [rng.uniform(-1, 1) for _ in range(1280)],
         }
 
-    import numpy as np
-    from essentia.standard import KeyExtractor, MonoLoader, RhythmExtractor2013
-
-    eng = get_engine()
-
-    # --- genre (model wants 16 kHz) ---
-    audio16 = MonoLoader(filename=str(path), sampleRate=16000, resampleQuality=4)()
-    # embedder + classifier are shared, non-thread-safe TF instances -> serialize
-    # this one inference pass; decode/BPM/key below stay parallel across workers.
-    with _lock:
-        embeddings = eng["embedder"](audio16)
-        preds = eng["classifier"](embeddings)
-    mean = np.mean(preds, axis=0)
-    order = np.argsort(mean)[::-1]
-    labels = eng["labels"]
-    styles = []
-    for i in order[:8]:
-        parent, child = labels[i].split("---", 1)
-        styles.append({"parent": parent, "style": child, "score": float(mean[i])})
-
-    # per-frame winner -> which genre dominates each ~2s patch of the track
-    frame_winners = np.argmax(preds, axis=1)
-    segments = [labels[int(i)].split("---", 1)[1] for i in frame_winners]
-
-    # salience-weighted overall identity (energy x confidence x recurrence)
-    salience = salience_read(preds, audio16, labels)
-
-    # per-frame top-k predictions (for hysteresis / sibling-merge lenses)
-    frames = frame_topk(preds, labels)
-
-    # custom head (if trained) scores the SAME embeddings -- no extra audio work
-    custom = custom_predict(embeddings)
-
-    # --- musical details (44.1 kHz for accuracy) ---
-    audio44 = MonoLoader(filename=str(path), sampleRate=44100, resampleQuality=4)()
-    duration = float(len(audio44)) / 44100.0
-
-    bpm = bpm_conf = None
-    try:
-        bpm, _, conf, _, _ = RhythmExtractor2013(method="multifeature")(audio44)
-        bpm, bpm_conf = float(bpm), float(conf)
-    except Exception:  # nosec B110  # BPM extraction is best-effort; None on failure is fine
-        pass
-
-    key = scale = camelot = None
-    key_strength = None
-    try:
-        k, s, strength = KeyExtractor()(audio44)
-        key, scale, key_strength = str(k), str(s), float(strength)
-        camelot = CAMELOT.get((key, scale))
-    except Exception:  # nosec B110  # key extraction is best-effort; None on failure is fine
-        pass
-
-    return {
-        "styles": styles,
-        "segments": segments,
-        "salience": salience,
-        "frames": frames,
-        "custom": custom,
-        "bpm": round(bpm, 1) if bpm else None,
-        "bpm_confidence": bpm_conf,
-        "key": key,
-        "scale": scale,
-        "camelot": camelot,
-        "key_strength": key_strength,
-        "duration": duration,
-        "waveform": waveform_peaks(audio44),
-        "wave": waveform_minmax(audio44),  # DAW-style; cached, not stored in payload
-        "emb_mean": [float(x) for x in np.mean(embeddings, axis=0)],
-    }
+    # Real pipeline: decode + locked inference, then musical features, then the
+    # payload assembly. Split into three helpers; behaviour and the returned dict
+    # are unchanged (see _decode_and_infer / _musical_features / _assemble).
+    audio16, audio44, embeddings, preds = _decode_and_infer(path)
+    features = _musical_features(audio44)
+    labels = get_engine()["labels"]
+    return _assemble(labels, audio16, embeddings, preds, features)
 
 
 # default embedder hops 128 mel-frames (~2.0s); a 32-frame hop (~0.5s) gives 4x
