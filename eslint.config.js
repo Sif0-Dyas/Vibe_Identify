@@ -27,12 +27,21 @@ module.exports = [
         // Cross-file shared surface: defined in one script, used in another.
         // Keep this list in sync with the files (grep for the names) -- a REAL
         // typo/rename across the split still trips no-undef in the caller.
-        escapeHtml: "writable", // app.js  -> used by map.js
+        escapeHtml: "writable", // app.js  -> used by map.js, panels.js
         familyOf: "writable", //   app.js  -> used by map.js
         fmtTime: "writable", //    app.js  -> used by player.js
-        PLAYER: "writable", //     player.js -> used by app.js
+        PLAYER: "writable", //     player.js -> used by app.js, panels.js
         OBJ_URLS: "writable", //   player.js -> used by app.js
         attachPlayer: "writable", // player.js -> used by app.js
+        // Rows (app.js) <-> side panels (panels.js) split:
+        styleInfo: "writable", //  app.js  -> used by panels.js (sibling editor dots)
+        results: "writable", //    app.js  -> used by panels.js (sibling editor re-applies to rows)
+        GLOBAL: "writable", //     app.js  -> used by panels.js (current lens settings)
+        SIBLING_MAP: "writable", //   app.js -> used by panels.js (rebuilt by the editor)
+        SIBLING_GROUPS: "writable", // app.js -> used by panels.js (edited by the editor)
+        renderTags: "writable", //       panels.js -> used by app.js (finishRow)
+        renderLookup: "writable", //     panels.js -> used by app.js (finishRow)
+        renderVibeMatches: "writable", // panels.js -> used by app.js (finishRow)
       },
     },
     rules: {

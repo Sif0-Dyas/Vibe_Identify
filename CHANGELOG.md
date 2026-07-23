@@ -159,6 +159,16 @@ _Work in progress lands here, then gets stamped with a version + date on release
   `.gitignore` gains `_cache/`, `manifest.json`, `*.npz` as insurance.
 
 ### Changed
+- **Split `static/app.js` at the rows-vs-panels seam.** The panel subsystems —
+  sibling-group editor, per-row tags, external-lookup results, the vibes panel, and
+  the label-propagation queue — moved to `static/panels.js`, leaving row rendering,
+  lenses, waveform, batch, compare, and the shared helpers in `app.js` (2,075 → 1,469
+  lines). Same plain-`<script>` pattern as the map/player split (`panels.js` loads
+  after `app.js` + `player.js`); the cross-file surface is declared in
+  `eslint.config.js` — app.js's `finishRow` → `renderTags`/`renderLookup`/
+  `renderVibeMatches`, and panels.js → `results`/`GLOBAL`/`SIBLING_MAP`/
+  `SIBLING_GROUPS`/`styleInfo`. Functions moved verbatim; `eslint` + `node --check`
+  clean.
 - **Split `routes.py` into a domain `routes/` package.** The 1,289-line single-module
   Blueprint became `vibedentify/routes/`: `_shared` (the Blueprint, optional loopback
   auth, cross-domain helpers), `analysis` (analyze/refine/compare/batch + audio/waveform),
