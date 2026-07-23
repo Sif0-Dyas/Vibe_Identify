@@ -103,6 +103,20 @@ deliberately opt into LAN/Tailscale access. The HTTP API assumes a trusted calle
 (routes read/scan/copy server-side paths), so only expose it beyond localhost
 intentionally.
 
+**Process model — single process, single user, home-anchored.** These are
+deliberate design choices for a personal, local tool; they are stated here so a
+future deployment change knows what it would be renegotiating. The app runs as a
+**single process**: concurrency is controlled by module-level locks (`_lock` and
+`_engine_lock` in `analysis.py`, `_db_lock` in `db.py`), which are process-local,
+so running under a **multi-worker** `gunicorn`/`waitress` would race the shared,
+non-thread-safe TF models and the SQLite handle — run a single worker, or move
+model/DB ownership out of process, before scaling out. It assumes a **single
+user**: there is no authentication or per-user isolation (the localhost
+trust-model note above covers network exposure). And it stores everything under
+**`Path.home()`** — the SQLite DB (`~/genre_v2.db`), the model cache
+(`~/essentia_models`), and training copies (`~/genre_training/`) — so state is
+anchored to one machine account rather than a shared or multi-tenant location.
+
 A `.env` file in the project root is **loaded automatically at startup** (no
 dependency; real environment variables always take precedence). Copy
 [`.env.example`](./.env.example) to `.env` to set the values below without

@@ -20,47 +20,92 @@ def db():
     return conn
 
 
+# --- schema migrations -------------------------------------------------------
+# The schema is versioned. A `schema_version` table holds the highest applied
+# migration number; init_db() runs every migration whose number exceeds it, in
+# order, inside init_db's transaction, then records the new version. A database
+# with no `schema_version` row (a fresh file, or a legacy DB from before this
+# machinery) counts as version 0 and is upgraded in place.
+#
+# To evolve the schema: APPEND a new (version, fn) entry to MIGRATIONS with the
+# next integer and a function taking an open cursor. Never edit or renumber an
+# already-shipped migration — a populated database has already run it; only add
+# new ones. Keep migrations re-run-safe (CREATE TABLE IF NOT EXISTS, guarded
+# ALTERs) so an interrupted upgrade recovers on the next start.
+
+
+def _migration_1(c):
+    """v1 — the full baseline schema (everything that predates versioning).
+
+    Moved verbatim from the pre-migration init_db, including the weight-column
+    patch for older `vibe_tracks`. On a legacy DB whose tables already exist the
+    CREATE ... IF NOT EXISTS calls no-op and the guarded ALTER is skipped, so it
+    converges to the exact same schema a fresh DB gets — no data touched."""
+    c.execute("""CREATE TABLE IF NOT EXISTS tracks(
+        hash TEXT PRIMARY KEY, filename TEXT, filepath TEXT, title TEXT,
+        payload TEXT, embedding BLOB, created REAL)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS vibes(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS vibe_tracks(
+        vibe_id INTEGER, hash TEXT, UNIQUE(vibe_id, hash))""")
+    c.execute("""CREATE TABLE IF NOT EXISTS tags(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS track_tags(
+        tag_id INTEGER, hash TEXT, UNIQUE(tag_id, hash))""")
+    # labeling accelerator: confirmed genre labels (source records HOW a label
+    # was made -- 'propagation' from the queue, room for 'override' etc.) and
+    # per-genre rejects so a rejected track never resurfaces in that queue.
+    c.execute("""CREATE TABLE IF NOT EXISTS training_labels(
+        hash TEXT, genre TEXT, source TEXT, created REAL,
+        UNIQUE(hash, genre))""")
+    c.execute("""CREATE TABLE IF NOT EXISTS training_rejects(
+        hash TEXT, genre TEXT, UNIQUE(hash, genre))""")
+    # segment-level manual overrides: a time range of a track labelled a genre
+    # (drag-selected on the waveform). Shipped with the payload on cache hits so
+    # the waveform repaints the span; also drives ffmpeg clip extraction.
+    c.execute("""CREATE TABLE IF NOT EXISTS segment_overrides(
+        hash TEXT, start_s REAL, end_s REAL, genre TEXT, created REAL)""")
+    # external metadata-lookup cache: one row per (track, source). External
+    # hits are cached permanently so a repeat click never re-queries the API.
+    c.execute("""CREATE TABLE IF NOT EXISTS lookup_cache(
+        hash TEXT, source TEXT, response_json TEXT, fetched REAL,
+        UNIQUE(hash, source))""")
+    # high-resolution min/max/rms waveform (DAW-style rendering). Computed once
+    # per track -- pre-filled at analysis time, or on demand from the audio file
+    # -- and cached permanently so it's never recomputed.
+    c.execute("""CREATE TABLE IF NOT EXISTS waveform_cache(
+        hash TEXT PRIMARY KEY, data_json TEXT, created REAL)""")
+    # weighted vibe membership (Rocchio relevance feedback).
+    # Older DBs have vibe_tracks(vibe_id, hash) only; add the weight column.
+    cols = {r[1] for r in c.execute("PRAGMA table_info(vibe_tracks)")}
+    if "weight" not in cols:
+        c.execute("ALTER TABLE vibe_tracks ADD COLUMN weight REAL DEFAULT 1.0")
+
+
+# Ordered, append-only list of (version, migration_fn).
+MIGRATIONS = [
+    (1, _migration_1),
+]
+
+
 def init_db():
+    """Bring the database up to the latest schema version.
+
+    Applies every migration numbered above the DB's recorded version, in order,
+    within init_db's transaction, then records the new version. Idempotent: an
+    already-current DB runs no migrations and just re-affirms its version."""
     with _db_lock, closing(db()) as conn, conn as c:
-        c.execute("""CREATE TABLE IF NOT EXISTS tracks(
-            hash TEXT PRIMARY KEY, filename TEXT, filepath TEXT, title TEXT,
-            payload TEXT, embedding BLOB, created REAL)""")
-        c.execute("""CREATE TABLE IF NOT EXISTS vibes(
-            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE)""")
-        c.execute("""CREATE TABLE IF NOT EXISTS vibe_tracks(
-            vibe_id INTEGER, hash TEXT, UNIQUE(vibe_id, hash))""")
-        c.execute("""CREATE TABLE IF NOT EXISTS tags(
-            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE)""")
-        c.execute("""CREATE TABLE IF NOT EXISTS track_tags(
-            tag_id INTEGER, hash TEXT, UNIQUE(tag_id, hash))""")
-        # labeling accelerator: confirmed genre labels (source records HOW a label
-        # was made -- 'propagation' from the queue, room for 'override' etc.) and
-        # per-genre rejects so a rejected track never resurfaces in that queue.
-        c.execute("""CREATE TABLE IF NOT EXISTS training_labels(
-            hash TEXT, genre TEXT, source TEXT, created REAL,
-            UNIQUE(hash, genre))""")
-        c.execute("""CREATE TABLE IF NOT EXISTS training_rejects(
-            hash TEXT, genre TEXT, UNIQUE(hash, genre))""")
-        # segment-level manual overrides: a time range of a track labelled a genre
-        # (drag-selected on the waveform). Shipped with the payload on cache hits so
-        # the waveform repaints the span; also drives ffmpeg clip extraction.
-        c.execute("""CREATE TABLE IF NOT EXISTS segment_overrides(
-            hash TEXT, start_s REAL, end_s REAL, genre TEXT, created REAL)""")
-        # external metadata-lookup cache: one row per (track, source). External
-        # hits are cached permanently so a repeat click never re-queries the API.
-        c.execute("""CREATE TABLE IF NOT EXISTS lookup_cache(
-            hash TEXT, source TEXT, response_json TEXT, fetched REAL,
-            UNIQUE(hash, source))""")
-        # high-resolution min/max/rms waveform (DAW-style rendering). Computed once
-        # per track -- pre-filled at analysis time, or on demand from the audio file
-        # -- and cached permanently so it's never recomputed.
-        c.execute("""CREATE TABLE IF NOT EXISTS waveform_cache(
-            hash TEXT PRIMARY KEY, data_json TEXT, created REAL)""")
-        # migration: weighted vibe membership (Rocchio relevance feedback).
-        # Older DBs have vibe_tracks(vibe_id, hash) only; add the weight column.
-        cols = {r[1] for r in c.execute("PRAGMA table_info(vibe_tracks)")}
-        if "weight" not in cols:
-            c.execute("ALTER TABLE vibe_tracks ADD COLUMN weight REAL DEFAULT 1.0")
+        c.execute("CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL)")
+        row = c.execute("SELECT version FROM schema_version").fetchone()
+        current = row[0] if row else 0
+        for version, migrate in MIGRATIONS:
+            if version > current:
+                migrate(c)
+                current = version
+        if row is None:
+            c.execute("INSERT INTO schema_version(version) VALUES(?)", (current,))
+        else:
+            c.execute("UPDATE schema_version SET version=?", (current,))
 
 
 def file_hash(path) -> str:

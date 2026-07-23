@@ -59,6 +59,28 @@ of the app it ships with (this branch/worktree, or the original checkout).
 Set `GENRE_DESKTOP_FAKE=1` to boot the backend in fake-analyzer mode (instant
 results, no model load) — handy for trying the window itself.
 
+### On a different machine
+
+The `WIN_PROJECT` and `WSL_PYTHON` defaults are **this developer's exact paths**
+(`WSL_PYTHON` is `/home/euphy/genre/bin/python`). They will not be right on your
+machine — set the ones that describe your setup, either by exporting the env var
+or by editing the constant at the top of `genre_app.pyw`:
+
+- **`GENRE_WSL_PYTHON`** — the WSL venv Python that has Essentia installed. Almost
+  always needs changing.
+- **`GENRE_WIN_PROJECT`** — the project folder. Only needed if the auto-detected
+  value (the folder containing `desktop/`) is wrong.
+
+For example, for a WSL user `alice` whose venv is at `~/genre`:
+
+```
+set GENRE_WSL_PYTHON=/home/alice/genre/bin/python
+```
+
+If the configured project folder doesn't exist on disk, the shell now says so
+directly on its error screen (naming the path and the variable to fix) instead of
+only reporting a generic timeout.
+
 ## Security model
 
 This branch runs the backend **locked down**, so it isn't just "a web server on
